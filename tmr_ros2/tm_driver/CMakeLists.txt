@@ -148,9 +148,48 @@ else()
     tf2_geometry_msgs
   )
 endif()
-  
+if (moveit2_lib_auto_judge AND moveit_ros_planning_interface_FOUND)
+  add_executable(tm_driver_custom
+    src/tm_ros2_composition_moveit.cpp
+    src/tm_ros2_sct.cpp
+    src/tm_ros2_svr.cpp
+    src/tm_driver_custom.cpp
+    src/tm_command.cpp
+    src/tm_sct_communication.cpp
+    src/tm_svr_communication.cpp
+    src/tm_communication.cpp
+    src/tm_robot_state.cpp
+    src/tm_packet.cpp
+    src/tm_print.cpp
+    src/tm_driver_utilities.cpp
+    src/tm_listen_node_connect.cpp
+    src/tm_ethernet_slave_connect.cpp
+    src/tm_ros2_movit_sct.cpp
+  )
+  ament_target_dependencies(tm_driver_custom rclcpp std_msgs sensor_msgs tm_msgs tf2_geometry_msgs trajectory_msgs control_msgs rclcpp_action)
+else()
+  add_executable(tm_driver_custom
+    src/tm_ros2_composition.cpp
+    src/tm_ros2_sct.cpp
+    src/tm_ros2_svr.cpp
+    src/tm_driver_custom.cpp
+    src/tm_command.cpp
+    src/tm_sct_communication.cpp
+    src/tm_svr_communication.cpp
+    src/tm_communication.cpp
+    src/tm_robot_state.cpp
+    src/tm_packet.cpp
+    src/tm_print.cpp
+    src/tm_driver_utilities.cpp
+    src/tm_listen_node_connect.cpp
+    src/tm_ethernet_slave_connect.cpp
+  )
+  ament_target_dependencies(tm_driver_custom rclcpp std_msgs sensor_msgs tm_msgs tf2_geometry_msgs)
+endif()
+
 install(TARGETS
   tm_driver
+  tm_driver_custom
   DESTINATION lib/${PROJECT_NAME}
 )
 
