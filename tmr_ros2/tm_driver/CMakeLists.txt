@@ -31,6 +31,7 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(tm_msgs REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 set(moveit2_lib_auto_judge true)
 if (moveit2_lib_auto_judge)
   find_package(moveit_ros_planning_interface QUIET)
@@ -92,6 +93,7 @@ if (moveit2_lib_auto_judge)
       std_msgs
       sensor_msgs
       tm_msgs
+      tf2_geometry_msgs
       trajectory_msgs
       control_msgs
       rclcpp_action
@@ -118,6 +120,7 @@ if (moveit2_lib_auto_judge)
       std_msgs
       sensor_msgs
       tm_msgs
+      tf2_geometry_msgs
     )
   endif (moveit_ros_planning_interface_FOUND)
 else()
@@ -142,6 +145,7 @@ else()
     std_msgs
     sensor_msgs
     tm_msgs
+    tf2_geometry_msgs
   )
 endif()
   

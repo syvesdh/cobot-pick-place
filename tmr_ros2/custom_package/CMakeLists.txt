@@ -24,6 +24,7 @@ find_package(std_msgs REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(techman_robot_msgs REQUIRED)
 find_package(ament_index_cpp REQUIRED)
+find_package(tm_msgs REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -40,20 +41,51 @@ add_executable(tm_send_command src/send_command.cpp)
   ament_target_dependencies(tm_send_command
   "techman_robot_msgs"
   "rclcpp"
+  "tm_msgs"
 )
 
 add_executable(sub_img src/sub_img.cpp)
 ament_target_dependencies(sub_img
   "rclcpp"
+  "rclcpp_components"
   "sensor_msgs"
   "std_msgs"
   "OpenCV"
   "ament_index_cpp"
 )
 
+add_executable(calibrate_camera_tmros2 src/calibrate_camera_tmros2.cpp)
+ament_target_dependencies(calibrate_camera_tmros2
+  "rclcpp"
+  "rclcpp_components"
+  "sensor_msgs"
+  "std_msgs"
+  "OpenCV"
+  "ament_index_cpp"
+)
+
+add_executable(detect_aruco_pose_tmros2 src/detect_aruco_pose_tmros2.cpp)
+ament_target_dependencies(detect_aruco_pose_tmros2
+  "rclcpp"
+  "rclcpp_components"
+  "sensor_msgs"
+  "std_msgs"
+  "OpenCV"
+  "ament_index_cpp"
+)
+
+add_executable(get_pose_tmros2 src/get_pose_tmros2.cpp)
+ament_target_dependencies(get_pose_tmros2
+  "rclcpp"
+  "tm_msgs"
+)
+
 install(TARGETS
   tm_send_command
   sub_img
+  calibrate_camera_tmros2
+  detect_aruco_pose_tmros2
+  get_pose_tmros2
   DESTINATION lib/${PROJECT_NAME}
 )
 
