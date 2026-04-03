@@ -6,6 +6,9 @@ from geometry_msgs.msg import PoseStamped
 from moveit_msgs.action import MoveGroup
 from moveit_msgs.msg import MotionPlanRequest, Constraints, PositionConstraint, OrientationConstraint, BoundingVolume
 from shape_msgs.msg import SolidPrimitive
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+import cv2
 import math
 
 def euler_to_quaternion(roll, pitch, yaw):
@@ -20,6 +23,28 @@ class MoveItXYZRPYClient(Node):
         super().__init__('moveit_xyzrpy_client')
         # Binds to the standard MoveIt Action Server action
         self._action_client = ActionClient(self, MoveGroup, 'move_action')
+        
+        # Setup OpenCV Bridge and Subscribe to the Techman Camera Stream
+        self.bridge = CvBridge()
+        self.image_sub = self.create_subscription(
+            Image,
+            'techman_image',
+            self.image_callback,
+            10
+        )
+        self.get_logger().info('Subscribed to techman_image camera stream!')
+
+    def image_callback(self, msg):
+        try:
+            # Convert ROS Image message to OpenCV matrix
+            cv_image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+            
+            # Display it in a live window
+            cv2.imshow('Techman Camera Stream (Python)', cv_image)
+            cv2.waitKey(1)  # 1ms delay to render the window frame
+            
+        except Exception as e:
+            self.get_logger().error(f'Failed to decode image: {str(e)}')
         
     def send_ptp_goal(self, x, y, z, roll, pitch, yaw):
         self.get_logger().info('Waiting for MoveIt action server (/move_action)...')
