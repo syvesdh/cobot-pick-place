@@ -102,10 +102,12 @@ ros2 run custom_package eye_in_hand_calibration.py --ros-args -p square_size:=0.
 
 **Workflow:**
 
-| Phase | What to do | Key |
-|-------|-----------|-----|
+| Phase | What happens | Key |
+|-------|-------------|-----|
 | **Phase 1** — Intrinsic Calibration | Move the 9×6 chessboard in front of the TM camera at various angles. Frames auto-capture every 1s when corners are detected. | `c` = calibrate, `q` = quit |
-| **Phase 2** — Eye-in-Hand Calibration | Move the cobot to 10+ different poses where the chessboard is visible. At each pose press SPACE to capture. | `SPACE` = capture, `c` = calibrate, `q` = quit |
+| **Phase 2** — Eye-in-Hand Calibration (Automated) | The cobot automatically moves to 17 predefined poses via MoveIt. Keep the chessboard **fixed on the table**. At each pose, the system auto-detects the board and captures the pair. | `q` = abort |
+
+**Configuration:** Edit `CALIB_CENTER_X/Y/Z` and `CALIB_POSE_OFFSETS` at the top of `eye_in_hand_calibration.py` to set the center position above your chessboard and the offset pattern.
 
 **Output:** `eye_in_hand_calibration.npz` containing `mtx`, `dist`, and `T_tcp_to_camera`.
 
