@@ -94,4 +94,16 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(
+  DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(PROGRAMS
+  scripts/eye_in_hand_calibration.py
+  scripts/pick_place_demo.py
+  scripts/move_xyzrpy.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 ament_package()

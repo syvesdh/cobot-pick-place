@@ -65,3 +65,102 @@ py detect_aruco_pose.py --marker_size 0.02
 -   `--calib`: Path to the calibration parameters file (default: `camera_calibration.npz`).
 
 The script looks for ArUco markers `ID 0` and `ID 1` from the `cv2.aruco.DICT_4X4_50` dictionary. It overlays a 3D coordinate frame on detected markers and calculates the true `XYZ` in meters and `Roll, Pitch, Yaw` in degrees. Press `q` to quit.
+
+---
+
+## ROS 2 TM Cobot Pipeline
+
+The following scripts run as ROS 2 nodes for the **TM5-700** cobot using the TM driver, MoveIt, and the built-in TM camera.
+
+### Prerequisites
+
+1. Build the workspace:
+   ```bash
+   cd ~/cobot-pick-place
+   colcon build --packages-select custom_package
+   source install/setup.bash
+   ```
+
+2. Ensure the TM driver is running (or use the provided launch files which start it automatically).
+
+---
+
+### Step 1: Eye-in-Hand Calibration
+
+Calibrates both camera intrinsics (using a 9×6 chessboard) and the camera-to-TCP extrinsic transform.
+
+**Using the launch file (recommended):**
+```bash
+ros2 launch custom_package eye_in_hand_calibration.launch.py robot_ip:=192.168.1.2
+```
+
+**Or run the node directly** (if TM driver is already running):
+```bash
+ros2 run custom_package eye_in_hand_calibration.py
+ros2 run custom_package eye_in_hand_calibration.py --ros-args -p square_size:=0.025 -p output:=eye_in_hand_calibration.npz
+```
+
+**Workflow:**
+
+| Phase | What to do | Key |
+|-------|-----------|-----|
+| **Phase 1** — Intrinsic Calibration | Move the 9×6 chessboard in front of the TM camera at various angles. Frames auto-capture every 1s when corners are detected. | `c` = calibrate, `q` = quit |
+| **Phase 2** — Eye-in-Hand Calibration | Move the cobot to 10+ different poses where the chessboard is visible. At each pose press SPACE to capture. | `SPACE` = capture, `c` = calibrate, `q` = quit |
+
+**Output:** `eye_in_hand_calibration.npz` containing `mtx`, `dist`, and `T_tcp_to_camera`.
+
+---
+
+### Step 2: Pick-and-Place Demo
+
+Runs the full autonomous pick-and-place loop: detect ArUco cubes → pick cube 1 → stack on cube 0.
+
+**Using the launch file (recommended):**
+```bash
+ros2 launch custom_package pick_place_demo.launch.py robot_ip:=192.168.1.2 calib_file:=eye_in_hand_calibration.npz
+```
+
+**Or run the node directly:**
+```bash
+ros2 run custom_package pick_place_demo.py
+ros2 run custom_package pick_place_demo.py --ros-args -p calib_file:=eye_in_hand_calibration.npz
+```
+
+**Configuration:** Edit the constants at the top of `pick_place_demo.py` to match your setup:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `MARKER_SIZE` | `0.02` | ArUco marker size (meters) |
+| `CUBE_SIZE` | `0.03` | Cube dimensions (3cm) |
+| `TCP_OFFSET_X/Y/Z` | `0, 0, 0.15` | Gripper offset from flange (meters) |
+| `TOP_VIEW_X/Y/Z` | `0.35, 0, 0.45` | Top-view survey position (meters) |
+| `TOP_VIEW_ROLL/PITCH/YAW` | `π, 0, 0` | Top-view orientation (radians) |
+| `GRIPPER_PIN` | `0` | Digital output pin for gripper |
+| `APPROACH_HEIGHT` | `0.08` | Height above target to approach from |
+| `MOVE_VELOCITY` | `0.3` | MoveIt velocity scaling |
+
+**Demo loop:**
+1. Move to top-view → detect cube 0 and cube 1
+2. Approach cube 1 → descend → close gripper
+3. Retreat → move above cube 0 → descend → open gripper → retreat
+4. Repeat
+
+The camera window displays real-time ArUco detection with 3D axes, cube wireframe overlay, and XYZ/RPY text.
+
+---
+
+### Other ROS 2 Nodes
+
+```bash
+# Move the cobot to a specific XYZRPY coordinate
+ros2 run custom_package move_xyzrpy.py
+
+# View the TM camera stream
+ros2 run custom_package sub_img
+
+# Get real-time 6D pose of the TCP
+ros2 run custom_package get_pose_tmros2
+
+# Send a raw command to the TM robot
+ros2 run custom_package tm_send_command
+```
