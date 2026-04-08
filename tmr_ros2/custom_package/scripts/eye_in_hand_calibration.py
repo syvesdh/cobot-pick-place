@@ -70,21 +70,21 @@ CALIB_POSE_OFFSETS = [
     ( 0.00,  0.05,  0.00,   0.0,    0.0,    0.0  ),   # Forward
     ( 0.00, -0.05,  0.00,   0.0,    0.0,    0.0  ),   # Backward
     # Tilted views
-    ( 0.04,  0.00,  0.02,   0.0,    0.15,   0.0  ),   # Tilt pitch +
-    (-0.04,  0.00,  0.02,   0.0,   -0.15,   0.0  ),   # Tilt pitch -
-    ( 0.00,  0.04,  0.02,   0.15,   0.0,    0.0  ),   # Tilt roll +
-    ( 0.00, -0.04,  0.02,  -0.15,   0.0,    0.0  ),   # Tilt roll -
+    ( 0.04,  0.00,  0.02,   0.0,    0.05,   0.0  ),   # Tilt pitch +
+    (-0.04,  0.00,  0.02,   0.0,   -0.05,   0.0  ),   # Tilt pitch -
+    ( 0.00,  0.04,  0.02,   0.05,   0.0,    0.0  ),   # Tilt roll +
+    ( 0.00, -0.04,  0.02,  -0.05,   0.0,    0.0  ),   # Tilt roll -
     # Diagonal with tilt
-    ( 0.04,  0.04,  0.02,   0.10,   0.10,   0.0  ),   # Diagonal NE
-    (-0.04, -0.04,  0.02,  -0.10,  -0.10,   0.0  ),   # Diagonal SW
-    ( 0.04, -0.04,  0.02,  -0.10,   0.10,   0.0  ),   # Diagonal SE
-    (-0.04,  0.04,  0.02,   0.10,  -0.10,   0.0  ),   # Diagonal NW
+    ( 0.04,  0.04,  0.02,   0.05,   0.05,   0.0  ),   # Diagonal NE
+    (-0.04, -0.04,  0.02,  -0.05,  -0.05,   0.0  ),   # Diagonal SW
+    ( 0.04, -0.04,  0.02,  -0.05,   0.05,   0.0  ),   # Diagonal SE
+    (-0.04,  0.04,  0.02,   0.05,  -0.05,   0.0  ),   # Diagonal NW
     # Different heights
     ( 0.00,  0.00, -0.05,   0.0,    0.0,    0.0  ),   # Lower
     ( 0.00,  0.00,  0.05,   0.0,    0.0,    0.0  ),   # Higher
     # Yaw rotation
-    ( 0.03,  0.03,  0.00,   0.0,    0.0,    0.20 ),   # Yaw +
-    (-0.03, -0.03,  0.00,   0.0,    0.0,   -0.20 ),   # Yaw -
+    ( 0.03,  0.03,  0.00,   0.0,    0.0,    0.05 ),   # Yaw +
+    (-0.03, -0.03,  0.00,   0.0,    0.0,   -0.05 ),   # Yaw -
 ]
 
 MOVE_VELOCITY = 0.3
@@ -241,11 +241,8 @@ class EyeInHandCalibration(Node):
         self.get_logger().info(f'  Square size: {self.square_size}m')
         self.get_logger().info(f'  Output file: {self.output_file}')
         self.get_logger().info(f'  Calibration poses: {len(CALIB_POSE_OFFSETS)}')
-
-        # Run processing in a separate thread
+        
         self.running = True
-        self.process_thread = threading.Thread(target=self.run_calibration, daemon=True)
-        self.process_thread.start()
 
     # --------------------------------------------------------
     # Callbacks
@@ -627,8 +624,14 @@ class EyeInHandCalibration(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = EyeInHandCalibration()
+    
+    # Spin ROS 2 in a background thread to allow OpenCV to own the Main Thread
+    spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
+    spin_thread.start()
+    
     try:
-        rclpy.spin(node)
+        # Run CV2 GUI safely on the Main Thread (Required by Wayland/macOS)
+        node.run_calibration()
     except KeyboardInterrupt:
         pass
     finally:
@@ -636,7 +639,7 @@ def main(args=None):
         cv2.destroyAllWindows()
         if rclpy.ok():
             rclpy.shutdown()
-
+        spin_thread.join(timeout=1.0)
 
 if __name__ == '__main__':
     main()

@@ -53,8 +53,8 @@ CUBE_SIZE = 0.03              # 3cm cube
 
 # Tool Center Point offset from flange to gripper tip (meters)
 # Adjust if the gripper extends beyond the cobot flange
-TCP_OFFSET_X = 0.0763
-TCP_OFFSET_Y = -0.10985
+TCP_OFFSET_X = 0.10985
+TCP_OFFSET_Y = -0.0763
 TCP_OFFSET_Z = 0.10977           # Gripper extends 15cm below flange
 
 # Top-view survey position (XYZ in meters, RPY in radians)
@@ -214,13 +214,16 @@ class PickPlaceDemo(Node):
 
         # State
         self.latest_image = None
-        self.latest_tcp_pose = None
+        self.display_image = None
         self.image_lock = threading.Lock()
         self.pose_lock = threading.Lock()
+        self.marker_lock = threading.Lock()
+
+        # Flag for main thread shutdown
+        self.running = True
 
         # Detected marker poses (in camera frame) — updated every frame
         self.detected_markers = {}  # {id: (rvec, tvec)} in camera frame
-        self.marker_lock = threading.Lock()
 
         # TM set_positions service client
         self.set_pos_client = self.create_client(SetPositions, 'set_positions')
@@ -323,8 +326,9 @@ class PickPlaceDemo(Node):
         with self.marker_lock:
             self.detected_markers = detected
 
-        cv2.imshow('Pick-Place Demo — ArUco Detection', display)
-        cv2.waitKey(1)
+        # Safely hand off the rendered frame for the Main Thread to display
+        with self.image_lock:
+            self.display_image = display
 
     def pose_callback(self, msg):
         """Store latest TCP pose from robot feedback."""
@@ -487,6 +491,27 @@ class PickPlaceDemo(Node):
         self.get_logger().warn(f'Could not get stable detection for marker {marker_id}')
         return None
 
+    def get_flange_target(self, pos_base, z_padding):
+        """
+        Given the target cube position in Base frame, calculate where the FLANGE 
+        needs to travel so the Gripper Tip perfectly reaches the target.
+        """
+        # Flange Rotation Matrix at TOP_VIEW
+        R_f = euler_xyz_to_rotation_matrix(TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW)
+        
+        # Gripper Tip offset in Flange's local coordinate system
+        tip_offset_local = np.array([TCP_OFFSET_X, TCP_OFFSET_Y, TCP_OFFSET_Z])
+        
+        # Rotate that local offset into the global Base frame
+        tip_offset_base = R_f @ tip_offset_local
+        
+        # Flange absolute target = Target Pos - Offset
+        flange_target = pos_base - tip_offset_base
+        
+        # Add the Z approach padding
+        flange_target[2] += z_padding
+        return flange_target
+
     # --------------------------------------------------------
     # Demo Pipeline
     # --------------------------------------------------------
@@ -546,20 +571,16 @@ class PickPlaceDemo(Node):
 
             # Step 3: Move above cube 1 (approach)
             self.get_logger().info('Step 3: Approaching cube 1...')
-            approach_z = pos_cube1[2] + APPROACH_HEIGHT + TCP_OFFSET_Z
-            if not self.move_to(pos_cube1[0] + TCP_OFFSET_X,
-                                pos_cube1[1] + TCP_OFFSET_Y,
-                                approach_z,
+            approach_pos = self.get_flange_target(pos_cube1, APPROACH_HEIGHT)
+            if not self.move_to(approach_pos[0], approach_pos[1], approach_pos[2],
                                 TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW):
                 self.get_logger().error('Failed to approach cube 1.')
                 continue
 
             # Step 4: Move down to grab position
             self.get_logger().info('Step 4: Descending to grab cube 1...')
-            grab_z = pos_cube1[2] + TCP_OFFSET_Z
-            if not self.move_to(pos_cube1[0] + TCP_OFFSET_X,
-                                pos_cube1[1] + TCP_OFFSET_Y,
-                                grab_z,
+            grab_pos = self.get_flange_target(pos_cube1, 0.0)
+            if not self.move_to(grab_pos[0], grab_pos[1], grab_pos[2],
                                 TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW):
                 self.get_logger().error('Failed to descend to cube 1.')
                 continue
@@ -571,28 +592,22 @@ class PickPlaceDemo(Node):
 
             # Step 6: Retreat up
             self.get_logger().info('Step 6: Retreating...')
-            retreat_z = pos_cube1[2] + RETREAT_HEIGHT + TCP_OFFSET_Z
-            self.move_to(pos_cube1[0] + TCP_OFFSET_X,
-                         pos_cube1[1] + TCP_OFFSET_Y,
-                         retreat_z,
+            retreat_pos = self.get_flange_target(pos_cube1, RETREAT_HEIGHT)
+            self.move_to(retreat_pos[0], retreat_pos[1], retreat_pos[2],
                          TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW)
 
             # Step 7: Move above cube 0 (with stacking offset)
             self.get_logger().info('Step 7: Moving above cube 0...')
-            place_approach_z = pos_cube0[2] + PLACE_STACK_OFFSET + APPROACH_HEIGHT + TCP_OFFSET_Z
-            if not self.move_to(pos_cube0[0] + TCP_OFFSET_X,
-                                pos_cube0[1] + TCP_OFFSET_Y,
-                                place_approach_z,
+            place_approach_pos = self.get_flange_target(pos_cube0, PLACE_STACK_OFFSET + APPROACH_HEIGHT)
+            if not self.move_to(place_approach_pos[0], place_approach_pos[1], place_approach_pos[2],
                                 TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW):
                 self.get_logger().error('Failed to approach cube 0.')
                 continue
 
             # Step 8: Move down to place position (on top of cube 0)
             self.get_logger().info('Step 8: Placing cube 1 on cube 0...')
-            place_z = pos_cube0[2] + PLACE_STACK_OFFSET + TCP_OFFSET_Z
-            if not self.move_to(pos_cube0[0] + TCP_OFFSET_X,
-                                pos_cube0[1] + TCP_OFFSET_Y,
-                                place_z,
+            place_pos = self.get_flange_target(pos_cube0, PLACE_STACK_OFFSET)
+            if not self.move_to(place_pos[0], place_pos[1], place_pos[2],
                                 TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW):
                 self.get_logger().error('Failed to descend to place position.')
                 continue
@@ -604,15 +619,14 @@ class PickPlaceDemo(Node):
 
             # Step 10: Retreat up
             self.get_logger().info('Step 10: Final retreat...')
-            self.move_to(pos_cube0[0] + TCP_OFFSET_X,
-                         pos_cube0[1] + TCP_OFFSET_Y,
-                         place_approach_z,
+            self.move_to(place_approach_pos[0], place_approach_pos[1], place_approach_pos[2],
                          TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW)
 
             self.get_logger().info(f'--- Cycle {cycle} complete! ---')
             time.sleep(2)
 
         self.get_logger().info('Demo finished.')
+        self.running = False
         cv2.destroyAllWindows()
         if rclpy.ok():
             rclpy.shutdown()
@@ -622,7 +636,29 @@ def main(args=None):
     rclpy.init(args=args)
     try:
         node = PickPlaceDemo()
-        rclpy.spin(node)
+        
+        # Spin ROS 2 in a background daemon thread
+        spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
+        spin_thread.start()
+
+        # Start the pick-and-place logic in its own background daemon thread
+        pipeline_thread = threading.Thread(target=node.run_demo, daemon=True)
+        pipeline_thread.start()
+
+        # Safely run CV2 GUI rendering strictly on the Main Python Thread
+        cv2.namedWindow('Pick-Place Demo — ArUco Detection', cv2.WINDOW_AUTOSIZE)
+        while rclpy.ok() and node.running:
+            with node.image_lock:
+                frame = node.display_image.copy() if node.display_image is not None else None
+            
+            if frame is not None:
+                cv2.imshow('Pick-Place Demo — ArUco Detection', frame)
+            
+            key = cv2.waitKey(30) & 0xFF
+            if key == ord('q'):
+                node.running = False
+                break
+
     except FileNotFoundError:
         print("Calibration file not found. Run eye_in_hand_calibration.py first.")
     except KeyboardInterrupt:
