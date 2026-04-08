@@ -646,15 +646,25 @@ def main(args=None):
         pipeline_thread.start()
 
         # Safely run CV2 GUI rendering strictly on the Main Python Thread
-        cv2.namedWindow('Pick-Place Demo — ArUco Detection', cv2.WINDOW_AUTOSIZE)
+        window_name = 'Pick-Place Demo — ArUco Detection'
+        cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+        
+        # Draw a placeholder quickly so Wayland doesn't mistakenly flag the window as unresponsive
+        dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.putText(dummy_frame, "Waiting for Camera Stream...", (50, 240), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        cv2.imshow(window_name, dummy_frame)
+        cv2.waitKey(1)
+
         while rclpy.ok() and node.running:
             with node.image_lock:
                 frame = node.display_image.copy() if node.display_image is not None else None
             
             if frame is not None:
-                cv2.imshow('Pick-Place Demo — ArUco Detection', frame)
+                cv2.imshow(window_name, frame)
             
-            key = cv2.waitKey(30) & 0xFF
+            # Using 1ms instead of 30ms prevents Wayland message queues from overflowing
+            key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 node.running = False
                 break

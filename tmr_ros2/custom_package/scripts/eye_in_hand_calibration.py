@@ -44,7 +44,7 @@ import os
 # CONFIGURATION
 # ============================================================
 BOARD_SIZE = (9, 6)                 # Internal corners (width, height)
-DEFAULT_SQUARE_SIZE = 0.025         # Chessboard square size in meters
+DEFAULT_SQUARE_SIZE = 0.006         # Chessboard square size in meters
 DEFAULT_OUTPUT = "eye_in_hand_calibration.npz"
 CAPTURE_INTERVAL = 1.0              # Seconds between auto-captures
 
@@ -70,26 +70,26 @@ CALIB_POSE_OFFSETS = [
     ( 0.00,  0.05,  0.00,   0.0,    0.0,    0.0  ),   # Forward
     ( 0.00, -0.05,  0.00,   0.0,    0.0,    0.0  ),   # Backward
     # Tilted views
-    ( 0.04,  0.00,  0.02,   0.0,    0.05,   0.0  ),   # Tilt pitch +
-    (-0.04,  0.00,  0.02,   0.0,   -0.05,   0.0  ),   # Tilt pitch -
-    ( 0.00,  0.04,  0.02,   0.05,   0.0,    0.0  ),   # Tilt roll +
-    ( 0.00, -0.04,  0.02,  -0.05,   0.0,    0.0  ),   # Tilt roll -
+    ( 0.04,  0.00,  0.02,   0.0,    0.15,   0.0  ),   # Tilt pitch +
+    (-0.04,  0.00,  0.02,   0.0,   -0.15,   0.0  ),   # Tilt pitch -
+    ( 0.00,  0.04,  0.02,   0.15,   0.0,    0.0  ),   # Tilt roll +
+    ( 0.00, -0.04,  0.02,  -0.15,   0.0,    0.0  ),   # Tilt roll -
     # Diagonal with tilt
-    ( 0.04,  0.04,  0.02,   0.05,   0.05,   0.0  ),   # Diagonal NE
-    (-0.04, -0.04,  0.02,  -0.05,  -0.05,   0.0  ),   # Diagonal SW
-    ( 0.04, -0.04,  0.02,  -0.05,   0.05,   0.0  ),   # Diagonal SE
-    (-0.04,  0.04,  0.02,   0.05,  -0.05,   0.0  ),   # Diagonal NW
+    ( 0.04,  0.04,  0.02,   0.12,   0.12,   0.0  ),   # Diagonal NE
+    (-0.04, -0.04,  0.02,  -0.12,  -0.12,   0.0  ),   # Diagonal SW
+    ( 0.04, -0.04,  0.02,  -0.12,   0.12,   0.0  ),   # Diagonal SE
+    (-0.04,  0.04,  0.02,   0.12,  -0.12,   0.0  ),   # Diagonal NW
     # Different heights
     ( 0.00,  0.00, -0.05,   0.0,    0.0,    0.0  ),   # Lower
     ( 0.00,  0.00,  0.05,   0.0,    0.0,    0.0  ),   # Higher
     # Yaw rotation
-    ( 0.03,  0.03,  0.00,   0.0,    0.0,    0.05 ),   # Yaw +
-    (-0.03, -0.03,  0.00,   0.0,    0.0,   -0.05 ),   # Yaw -
+    ( 0.03,  0.03,  0.00,   0.0,    0.0,    0.15 ),   # Yaw +
+    (-0.03, -0.03,  0.00,   0.0,    0.0,   -0.15 ),   # Yaw -
 ]
 
 MOVE_VELOCITY = 0.3
 MOVE_ACCELERATION = 0.3
-SETTLE_TIME = 1.5   # Seconds to wait after moving before capturing
+SETTLE_TIME = 4.0   # Seconds to wait after moving before capturing
 
 
 # ============================================================
@@ -216,7 +216,9 @@ class EyeInHandCalibration(Node):
 
         # Latest camera image and TCP pose
         self.latest_image = None
+        self.display_image = None
         self.latest_tcp_pose = None
+        self.last_key = -1
         self.image_lock = threading.Lock()
         self.pose_lock = threading.Lock()
 
@@ -417,8 +419,12 @@ class EyeInHandCalibration(Node):
             cv2.putText(display, "Press 'c' to calibrate, 'q' to quit",
                         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
-            cv2.imshow('Eye-in-Hand Calibration', display)
-            key = cv2.waitKey(30) & 0xFF
+            with self.image_lock:
+                self.display_image = display
+
+            key = self.last_key
+            if key != -1:
+                self.last_key = -1  # consume
 
             if key == ord('q'):
                 print("Exiting Phase 1 without calibration.")
@@ -429,6 +435,8 @@ class EyeInHandCalibration(Node):
                     print(f"  Warning: Only {self.frames_captured} frames. Need at least 5.")
                 else:
                     break
+            
+            time.sleep(0.05)
 
         if self.frames_captured > 0:
             print("\nCalculating camera intrinsics... Please wait.")
@@ -501,7 +509,10 @@ class EyeInHandCalibration(Node):
                 print(f"  [!] No chessboard detected at pose {i + 1}. Skipping.")
 
             # Check for user abort/skip via OpenCV key
-            key = cv2.waitKey(1) & 0xFF
+            key = self.last_key
+            if key != -1:
+                self.last_key = -1  # consume
+                
             if key == ord('q'):
                 print("User aborted Phase 2.")
                 break
@@ -581,8 +592,9 @@ class EyeInHandCalibration(Node):
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
             cv2.putText(display, "'q'=abort",
                         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-            cv2.imshow('Eye-in-Hand Calibration', display)
-            cv2.waitKey(1)
+            
+            with self.image_lock:
+                self.display_image = display
 
             if not ret_corners:
                 time.sleep(0.2)
@@ -614,8 +626,9 @@ class EyeInHandCalibration(Node):
 
             # Flash feedback
             display = cv2.bitwise_not(display)
-            cv2.imshow('Eye-in-Hand Calibration', display)
-            cv2.waitKey(300)
+            with self.image_lock:
+                self.display_image = display
+            time.sleep(0.3)
             return True
 
         return False
@@ -625,13 +638,32 @@ def main(args=None):
     rclpy.init(args=args)
     node = EyeInHandCalibration()
     
-    # Spin ROS 2 in a background thread to allow OpenCV to own the Main Thread
+    # Spin ROS 2 in a background thread
     spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
     spin_thread.start()
     
+    # Run the calibration math/sequence in its own background thread
+    process_thread = threading.Thread(target=node.run_calibration, daemon=True)
+    process_thread.start()
+    
     try:
-        # Run CV2 GUI safely on the Main Thread (Required by Wayland/macOS)
-        node.run_calibration()
+        # Run CV2 GUI safely strictly on the Main Thread (Required by Wayland/macOS)
+        cv2.namedWindow('Eye-in-Hand Calibration', cv2.WINDOW_AUTOSIZE)
+        while rclpy.ok() and node.running:
+            with node.image_lock:
+                frame = node.display_image.copy() if node.display_image is not None else None
+            
+            if frame is not None:
+                cv2.imshow('Eye-in-Hand Calibration', frame)
+                
+            key = cv2.waitKey(30) & 0xFF
+            if key != 255:  # OpenCV returns 255 if nothing is pressed
+                node.last_key = key
+                
+            if key == ord('q') and node.last_key == -1: # if we want instant kill for saftey
+                node.running = False
+                break
+                
     except KeyboardInterrupt:
         pass
     finally:
