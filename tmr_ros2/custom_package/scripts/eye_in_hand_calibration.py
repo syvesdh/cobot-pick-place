@@ -435,10 +435,10 @@ class EyeInHandCalibration(Node):
         print("  's' — Skip current pose")
         print("=" * 60)
 
-        # Wait for MoveIt
-        self.get_logger().info('Waiting for MoveIt action server...')
-        if not self.move_client.wait_for_server(timeout_sec=30.0):
-            self.get_logger().error('MoveIt action server not available! Cannot run Phase 2.')
+        # Wait for TM set_positions service
+        self.get_logger().info('Waiting for TM set_positions service...')
+        if not self.set_pos_client.wait_for_service(timeout_sec=30.0):
+            self.get_logger().error('set_positions service not available! Cannot run Phase 2.')
             return
 
         for i, (x, y, z, r, p, yw) in enumerate(calib_poses):
