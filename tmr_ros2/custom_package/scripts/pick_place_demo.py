@@ -53,23 +53,23 @@ CUBE_SIZE = 0.03              # 3cm cube
 
 # Tool Center Point offset from flange to gripper tip (meters)
 # Adjust if the gripper extends beyond the cobot flange
-TCP_OFFSET_X = 0.0
-TCP_OFFSET_Y = 0.0
-TCP_OFFSET_Z = 0.15           # Gripper extends 15cm below flange
+TCP_OFFSET_X = 0.0763
+TCP_OFFSET_Y = 0.10985
+TCP_OFFSET_Z = 0.10977           # Gripper extends 15cm below flange
 
 # Top-view survey position (XYZ in meters, RPY in radians)
 # The cobot moves here to look down and detect both cubes
-TOP_VIEW_X = 0.35
+TOP_VIEW_X = 0.33
 TOP_VIEW_Y = 0.0
-TOP_VIEW_Z = 0.45
+TOP_VIEW_Z = 0.50
 TOP_VIEW_ROLL = 3.14159       # π  — looking straight down
 TOP_VIEW_PITCH = 0.0
-TOP_VIEW_YAW = 0.0
+TOP_VIEW_YAW = 1.5708
 
 # Gripper I/O settings (Digital Output)
 GRIPPER_MODULE = 0             # MODULE_CONTROLBOX = 0
 GRIPPER_TYPE = 1               # TYPE_DIGITAL_OUT = 1
-GRIPPER_PIN = 0                # Digital output pin number
+GRIPPER_PIN = 2                # Digital output pin number
 GRIPPER_CLOSE_STATE = 1.0      # STATE_ON  = close gripper
 GRIPPER_OPEN_STATE = 0.0       # STATE_OFF = open gripper
 
