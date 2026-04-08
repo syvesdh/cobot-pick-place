@@ -27,14 +27,7 @@ from rclpy.action import ActionClient
 from sensor_msgs.msg import Image
 from tm_msgs.msg import FeedbackState
 from tm_msgs.srv import SetIO
-from moveit_msgs.action import MoveGroup
-from moveit_msgs.msg import (
-    MotionPlanRequest, Constraints,
-    PositionConstraint, OrientationConstraint,
-    BoundingVolume
-)
-from shape_msgs.msg import SolidPrimitive
-from geometry_msgs.msg import PoseStamped
+from tm_msgs.srv import SetPositions
 
 import cv2
 import numpy as np
@@ -232,8 +225,8 @@ class PickPlaceDemo(Node):
         self.detected_markers = {}  # {id: (rvec, tvec)} in camera frame
         self.marker_lock = threading.Lock()
 
-        # MoveIt action client
-        self.move_client = ActionClient(self, MoveGroup, 'move_action')
+        # TM set_positions service client
+        self.set_pos_client = self.create_client(SetPositions, 'set_positions')
 
         # SetIO service client (gripper)
         self.io_client = self.create_client(SetIO, 'set_io')
@@ -347,81 +340,42 @@ class PickPlaceDemo(Node):
     # --------------------------------------------------------
 
     def move_to(self, x, y, z, roll, pitch, yaw, wait=True):
-        """Send a PTP goal via MoveIt MoveGroup action (synchronous)."""
+        """Send a LINE_T goal via TM set_positions service (bypasses MoveIt IK flips)."""
         self.get_logger().info(
-            f'Moving to XYZ=[{x:.4f}, {y:.4f}, {z:.4f}] RPY=[{roll:.3f}, {pitch:.3f}, {yaw:.3f}]')
+            f'Moving via LINE_T to XYZ=[{x:.4f}, {y:.4f}, {z:.4f}] RPY=[{roll:.3f}, {pitch:.3f}, {yaw:.3f}]')
 
-        if not self.move_client.wait_for_server(timeout_sec=10.0):
-            self.get_logger().error('MoveIt action server not available!')
+        if not self.set_pos_client.wait_for_service(timeout_sec=5.0):
+            self.get_logger().error('set_positions service not available! Is TM driver running?')
             return False
 
-        goal = MoveGroup.Goal()
-        req = MotionPlanRequest()
-        req.group_name = 'tmr_arm'
-        req.num_planning_attempts = 5
-        req.allowed_planning_time = 10.0
-        req.max_velocity_scaling_factor = MOVE_VELOCITY
-        req.max_acceleration_scaling_factor = MOVE_ACCELERATION
+        req = SetPositions.Request()
+        req.motion_type = SetPositions.Request.LINE_T
+        req.positions = [float(x), float(y), float(z), float(roll), float(pitch), float(yaw)]
+        req.velocity = 0.2         # m/s
+        req.acc_time = 0.2         # time to reach max speed (s)
+        req.blend_percentage = 0   # 0%
+        req.fine_goal = True       # precise position
 
-        # Position constraint
-        pos_c = PositionConstraint()
-        pos_c.header.frame_id = 'base'
-        pos_c.link_name = 'flange'
-        s = SolidPrimitive()
-        s.type = SolidPrimitive.SPHERE
-        s.dimensions = [0.01]
-        bv = BoundingVolume()
-        bv.primitives.append(s)
-        ps = PoseStamped()
-        ps.header.frame_id = 'base'
-        ps.pose.position.x = float(x)
-        ps.pose.position.y = float(y)
-        ps.pose.position.z = float(z)
-        bv.primitive_poses.append(ps.pose)
-        pos_c.constraint_region = bv
-        pos_c.weight = 1.0
+        future = self.set_pos_client.call_async(req)
+        
+        t_start = time.time()
+        while not future.done() and (time.time() - t_start) < 10.0:
+            time.sleep(0.05)
 
-        # Orientation constraint
-        ori_c = OrientationConstraint()
-        ori_c.header.frame_id = 'base'
-        ori_c.link_name = 'flange'
-        q = euler_to_quaternion(roll, pitch, yaw)
-        ori_c.orientation.x = q[0]
-        ori_c.orientation.y = q[1]
-        ori_c.orientation.z = q[2]
-        ori_c.orientation.w = q[3]
-        ori_c.absolute_x_axis_tolerance = 0.01
-        ori_c.absolute_y_axis_tolerance = 0.01
-        ori_c.absolute_z_axis_tolerance = 0.01
-        ori_c.weight = 1.0
-
-        constraint = Constraints()
-        constraint.name = 'pick_place_goal'
-        constraint.position_constraints.append(pos_c)
-        constraint.orientation_constraints.append(ori_c)
-        req.goal_constraints.append(constraint)
-        goal.request = req
-
-        # Send and wait
-        future = self.move_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=15.0)
-
-        goal_handle = future.result()
-        if not goal_handle or not goal_handle.accepted:
-            self.get_logger().error('MoveIt goal rejected!')
+        if not future.done():
+            self.get_logger().error('set_positions service call timed out!')
             return False
 
-        self.get_logger().info('Goal accepted, waiting for result...')
-        result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future, timeout_sec=60.0)
-
-        result = result_future.result()
-        if result and result.result.error_code.val == 1:
-            self.get_logger().info('Move completed successfully.')
+        result = future.result()
+        if result and result.ok:
+            self.get_logger().info('Move command queued successfully.')
+            if wait:
+                # The service returns immediately when queued. We pause the script 
+                # to allow the physical motion to complete before firing the gripper.
+                time.sleep(3.0) 
             return True
         else:
-            code = result.result.error_code.val if result else 'timeout'
-            self.get_logger().error(f'Move failed with code: {code}')
+            self.get_logger().error('Move failed (service returned false).')
             return False
 
     # --------------------------------------------------------
