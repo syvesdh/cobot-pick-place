@@ -333,6 +333,10 @@ class EyeInHandCalibration(Node):
                 
                 time.sleep(0.1)
                 
+            if not arm_arrived:
+                self.get_logger().error('Movement timed out! Arm never arrived at the target coordinates.')
+                return False
+                
             return True
         else:
             self.get_logger().error('Move failed (service returned false).')
@@ -490,10 +494,18 @@ class EyeInHandCalibration(Node):
 
             print(f"\n--- Pose {i + 1}/{total_poses} ---")
 
-            # Move cobot to the calibration pose
-            success = self.move_to(x, y, z, r, p, yw)
+            # Move cobot to the calibration pose with retries
+            attempts = 0
+            success = False
+            while attempts < 3 and not success:
+                success = self.move_to(x, y, z, r, p, yw)
+                if not success:
+                    print(f"  [!] Move service failed. Retrying ({attempts + 1}/3)...")
+                    time.sleep(1.0)
+                attempts += 1
+
             if not success:
-                print(f"  [!] Failed to reach pose {i + 1}. Skipping.")
+                print(f"  [!] Failed to reach pose {i + 1} permanently. Skipping this detection.")
                 continue
 
             # Wait for the camera image to settle

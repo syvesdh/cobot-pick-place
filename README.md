@@ -166,3 +166,8 @@ ros2 run custom_package get_pose_tmros2
 # Send a raw command to the TM robot
 ros2 run custom_package tm_send_command
 ```
+
+imaage_talker
+move_group
+
+

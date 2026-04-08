@@ -215,6 +215,7 @@ class PickPlaceDemo(Node):
         # State
         self.latest_image = None
         self.display_image = None
+        self.latest_tcp_pose = None
         self.image_lock = threading.Lock()
         self.pose_lock = threading.Lock()
         self.marker_lock = threading.Lock()
@@ -395,6 +396,7 @@ class PickPlaceDemo(Node):
                     time.sleep(0.5)
                 else:
                     self.get_logger().warn('Arm moved but destination tolerance check timed out.')
+                    return False
             return True
         else:
             self.get_logger().error('Move failed (service returned false).')
