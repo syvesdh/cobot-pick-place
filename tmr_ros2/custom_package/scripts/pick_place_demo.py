@@ -101,11 +101,8 @@ def euler_to_quaternion(roll, pitch, yaw):
     return [qx, qy, qz, qw]
 
 
-def euler_xyz_deg_to_rotation_matrix(rx_deg, ry_deg, rz_deg):
-    """TM Euler angles (Rx, Ry, Rz in degrees) → 3x3 rotation matrix."""
-    rx = math.radians(rx_deg)
-    ry = math.radians(ry_deg)
-    rz = math.radians(rz_deg)
+def euler_xyz_to_rotation_matrix(rx, ry, rz):
+    """TM Euler angles (Rx, Ry, Rz in radians) → 3x3 rotation matrix."""
     Rx = np.array([[1, 0, 0],
                    [0, math.cos(rx), -math.sin(rx)],
                    [0, math.sin(rx),  math.cos(rx)]])
@@ -119,7 +116,7 @@ def euler_xyz_deg_to_rotation_matrix(rx_deg, ry_deg, rz_deg):
 
 
 def rotation_matrix_to_euler_zyx(R):
-    """Rotation matrix → (roll, pitch, yaw) in degrees (ZYX convention)."""
+    """Rotation matrix → (roll, pitch, yaw) in radians (ZYX convention)."""
     sy = math.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
     singular = sy < 1e-6
     if not singular:
@@ -130,16 +127,16 @@ def rotation_matrix_to_euler_zyx(R):
         roll = math.atan2(-R[1, 2], R[1, 1])
         pitch = math.atan2(-R[2, 0], sy)
         yaw = 0
-    return math.degrees(roll), math.degrees(pitch), math.degrees(yaw)
+    return roll, pitch, yaw
 
 
-def pose_to_homogeneous(x_mm, y_mm, z_mm, rx_deg, ry_deg, rz_deg):
-    """TM tool_pose [mm, deg] → 4x4 homogeneous matrix [meters]."""
+def pose_to_homogeneous(x, y, z, rx, ry, rz):
+    """TM tool_pose [meters, radians] → 4x4 homogeneous matrix [meters]."""
     T = np.eye(4)
-    T[:3, :3] = euler_xyz_deg_to_rotation_matrix(rx_deg, ry_deg, rz_deg)
-    T[0, 3] = x_mm / 1000.0
-    T[1, 3] = y_mm / 1000.0
-    T[2, 3] = z_mm / 1000.0
+    T[:3, :3] = euler_xyz_to_rotation_matrix(rx, ry, rz)
+    T[0, 3] = x
+    T[1, 3] = y
+    T[2, 3] = z
     return T
 
 

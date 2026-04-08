@@ -128,26 +128,42 @@ def euler_xyz_deg_to_rotation_matrix(rx_deg, ry_deg, rz_deg):
         [            0, 1,            0],
         [-math.sin(ry), 0, math.cos(ry)]
     ])
-    Rz = np.array([
-        [math.cos(rz), -math.sin(rz), 0],
-        [math.sin(rz),  math.cos(rz), 0],
-        [           0,             0, 1]
-    ])
-
-    # XYZ extrinsic = Rz * Ry * Rx
+def euler_xyz_to_rotation_matrix(rx, ry, rz):
+    """TM Euler angles (Rx, Ry, Rz in radians) → 3x3 rotation matrix."""
+    Rx = np.array([[1, 0, 0],
+                   [0, math.cos(rx), -math.sin(rx)],
+                   [0, math.sin(rx),  math.cos(rx)]])
+    Ry = np.array([[ math.cos(ry), 0, math.sin(ry)],
+                   [0, 1, 0],
+                   [-math.sin(ry), 0, math.cos(ry)]])
+    Rz = np.array([[math.cos(rz), -math.sin(rz), 0],
+                   [math.sin(rz),  math.cos(rz), 0],
+                   [0, 0, 1]])
     return Rz @ Ry @ Rx
 
 
-def pose_to_homogeneous(x_mm, y_mm, z_mm, rx_deg, ry_deg, rz_deg):
-    """
-    Convert TM tool_pose [X(mm), Y(mm), Z(mm), Rx(deg), Ry(deg), Rz(deg)]
-    into a 4x4 homogeneous transformation matrix (meters).
-    """
+def rotation_matrix_to_euler_zyx(R):
+    """Rotation matrix → (roll, pitch, yaw) in radians (ZYX convention)."""
+    sy = math.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
+    singular = sy < 1e-6
+    if not singular:
+        roll = math.atan2(R[2, 1], R[2, 2])
+        pitch = math.atan2(-R[2, 0], sy)
+        yaw = math.atan2(R[1, 0], R[0, 0])
+    else:
+        roll = math.atan2(-R[1, 2], R[1, 1])
+        pitch = math.atan2(-R[2, 0], sy)
+        yaw = 0
+    return roll, pitch, yaw
+
+
+def pose_to_homogeneous(x, y, z, rx, ry, rz):
+    """TM tool_pose [meters, radians] → 4x4 homogeneous matrix [meters]."""
     T = np.eye(4)
-    T[:3, :3] = euler_xyz_deg_to_rotation_matrix(rx_deg, ry_deg, rz_deg)
-    T[0, 3] = x_mm / 1000.0
-    T[1, 3] = y_mm / 1000.0
-    T[2, 3] = z_mm / 1000.0
+    T[:3, :3] = euler_xyz_to_rotation_matrix(rx, ry, rz)
+    T[0, 3] = x
+    T[1, 3] = y
+    T[2, 3] = z
     return T
 
 
