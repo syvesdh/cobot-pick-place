@@ -311,7 +311,29 @@ class EyeInHandCalibration(Node):
         result = future.result()
         if result and result.ok:
             self.get_logger().info('Move command queued successfully.')
-            # Optional: Sleep slightly longer for the very first move to ensure it finishes
+            
+            # Synchronously wait for the physical robot to reach the target block
+            self.get_logger().info('Waiting for arm to physically reach target...')
+            target_pos = np.array([float(x), float(y), float(z)])
+            arm_arrived = False
+            time.sleep(0.5)
+
+            wait_start = time.time()
+            while not arm_arrived and (time.time() - wait_start) < 20.0:
+                with self.pose_lock:
+                    curr_pose = self.latest_tcp_pose
+                
+                if curr_pose is not None:
+                    curr_pos = np.array(curr_pose[:3])
+                    # Euclidean distance in meters
+                    dist = np.linalg.norm(curr_pos - target_pos) 
+                    
+                    if dist < 0.005:  # within 5mm
+                        arm_arrived = True
+                        break
+                
+                time.sleep(0.1)
+                
             return True
         else:
             self.get_logger().error('Move failed (service returned false).')

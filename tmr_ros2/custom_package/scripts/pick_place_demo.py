@@ -54,7 +54,7 @@ CUBE_SIZE = 0.03              # 3cm cube
 # Tool Center Point offset from flange to gripper tip (meters)
 # Adjust if the gripper extends beyond the cobot flange
 TCP_OFFSET_X = 0.0763
-TCP_OFFSET_Y = 0.10985
+TCP_OFFSET_Y = -0.10985
 TCP_OFFSET_Z = 0.10977           # Gripper extends 15cm below flange
 
 # Top-view survey position (XYZ in meters, RPY in radians)
@@ -367,9 +367,30 @@ class PickPlaceDemo(Node):
         if result and result.ok:
             self.get_logger().info('Move command queued successfully.')
             if wait:
-                # The service returns immediately when queued. We pause the script 
-                # to allow the physical motion to complete before firing the gripper.
-                time.sleep(3.0) 
+                self.get_logger().info('Waiting for arm to physically reach target...')
+                target_pos = np.array([float(x), float(y), float(z)])
+                arm_arrived = False
+                time.sleep(0.5)
+
+                wait_start = time.time()
+                while not arm_arrived and (time.time() - wait_start) < 15.0:
+                    with self.pose_lock:
+                        curr_pose = self.latest_tcp_pose
+
+                    if curr_pose is not None:
+                        curr_pos = np.array(curr_pose[:3])
+                        dist = np.linalg.norm(curr_pos - target_pos)
+                        
+                        if dist < 0.005:  # within 5mm radius
+                            arm_arrived = True
+                            break
+                    time.sleep(0.1)
+
+                if arm_arrived:
+                    # Brief settle to ensure vibration stops
+                    time.sleep(0.5)
+                else:
+                    self.get_logger().warn('Arm moved but destination tolerance check timed out.')
             return True
         else:
             self.get_logger().error('Move failed (service returned false).')
