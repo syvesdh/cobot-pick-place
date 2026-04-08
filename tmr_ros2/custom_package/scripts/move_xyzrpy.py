@@ -128,12 +128,12 @@ def main(args=None):
     
     # Configure your desired XYZ (in meters) and RPY (in radians)
     action_client.send_ptp_goal(
-        x=0.4, 
-        y=0.1, 
-        z=0.4, 
-        roll=3.14159, 
+        x=0.33, 
+        y=0.0,
+        z=0.50, 
+        roll=3.08, 
         pitch=0.0, 
-        yaw=0.0
+        yaw=1.52
     )
     
     rclpy.spin(action_client)
