@@ -44,47 +44,39 @@ import os
 # CONFIGURATION
 # ============================================================
 BOARD_SIZE = (9, 6)                 # Internal corners (width, height)
-DEFAULT_SQUARE_SIZE = 0.006         # Chessboard square size in meters
+DEFAULT_SQUARE_SIZE = 0.0233         # Chessboard square size in meters
 DEFAULT_OUTPUT = "eye_in_hand_calibration.npz"
 CAPTURE_INTERVAL = 1.0              # Seconds between auto-captures
 
-# Eye-in-hand calibration poses (XYZ in meters, RPY in radians)
+# Eye-in-hand calibration poses (ABSOLUTE COORDS: XYZ in meters, RPY in radians)
 # The cobot will move to each of these poses automatically.
-# The chessboard should be fixed on the table and visible from all poses.
-# For good calibration: vary X,Y position and tilt angles.
-# ==> EDIT THESE to match your workspace and chessboard location <==
-CALIB_CENTER_X = 0.33               # X center above the chessboard
-CALIB_CENTER_Y = 0.0                # Y center above the chessboard
-CALIB_CENTER_Z = 0.50               # Z height above the chessboard
-CALIB_LOOKING_DOWN_ROLL = 3.14159   # π — camera facing straight down
-CALIB_LOOKING_DOWN_PITCH = 0.0
-CALIB_LOOKING_DOWN_YAW = 1.5708
+# Move your cobot manually using Free Drive, read the XYZ_RPY values from the screen,
+# and enter them into this array exactly as they appear!
+ABSOLUTE_CALIBRATION_POSES = [
+    # Format: (X, Y, Z, Roll, Pitch, Yaw)
+    ( 0.350,  0.015,  0.500,   3.141,   0.000,   1.571 ),  # Center
+    ( 0.250,  0.015,  0.500,   2.87979,   0.000,   1.571 ),  # Front Rx
+    ( 0.450,  0.015,  0.500,   3.40339,   0.000,   1.571 ),  # Back Rx
+    ( 0.350,  0.115,  0.500,   3.141,   0.261799,   1.571 ),  # Right Ry
+    ( 0.350,  -0.085,  0.500,   3.141,   0.261799,   1.571 ),  # Left Ry
+    ( 0.350,  0.015,  0.500,   3.141,   0.000,   2.00713 ),  # Rz
+    ( 0.350,  0.015,  0.500,   3.141,   0.000,   1.309 ),  # Rz
+    ( 0.350,  0.015,  0.600,   3.141,   0.000,   0.785398 ),  # Rz Up
+    ( 0.350,  0.015,  0.600,   3.141,   0.000,   2.35619 ),  # Rz Up
+    
+    ( 0.350,  0.015,  0.500,   3.141,   0.000,   1.571 ),  # Center
+    ( 0.380,  0.015,  0.500,   3.141,   0.000,   1.571 ),  # X+
+    ( 0.330,  0.015,  0.500,   3.141,   0.000,   1.571 ),  # X-
+    ( 0.350,  0.080,  0.500,   3.141,   0.000,   1.571 ),  # Y+
+    ( 0.350,  -0.050,  0.500,   3.141,   0.000,   1.571 ),  # Y-
+    ( 0.350,  0.015,  0.600,   3.141,   0.000,   1.571 ),  # Z+
+    ( 0.350,  0.015,  0.350,   3.141,   0.000,   1.571 ),  # Z-
 
-# Offsets from the center to create diverse viewpoints
-# Format: (dx, dy, dz, d_roll, d_pitch, d_yaw) — added to center values
-CALIB_POSE_OFFSETS = [
-    # Straight down at different XY positions
-    ( 0.00,  0.00,  0.00,   0.0,    0.0,    0.0  ),   # Center
-    ( 0.05,  0.00,  0.00,   0.0,    0.0,    0.0  ),   # Right
-    (-0.05,  0.00,  0.00,   0.0,    0.0,    0.0  ),   # Left
-    ( 0.00,  0.05,  0.00,   0.0,    0.0,    0.0  ),   # Forward
-    ( 0.00, -0.05,  0.00,   0.0,    0.0,    0.0  ),   # Backward
-    # Tilted views
-    ( 0.04,  0.00,  0.02,   0.0,    0.15,   0.0  ),   # Tilt pitch +
-    (-0.04,  0.00,  0.02,   0.0,   -0.15,   0.0  ),   # Tilt pitch -
-    ( 0.00,  0.04,  0.02,   0.15,   0.0,    0.0  ),   # Tilt roll +
-    ( 0.00, -0.04,  0.02,  -0.15,   0.0,    0.0  ),   # Tilt roll -
-    # Diagonal with tilt
-    ( 0.04,  0.04,  0.02,   0.12,   0.12,   0.0  ),   # Diagonal NE
-    (-0.04, -0.04,  0.02,  -0.12,  -0.12,   0.0  ),   # Diagonal SW
-    ( 0.04, -0.04,  0.02,  -0.12,   0.12,   0.0  ),   # Diagonal SE
-    (-0.04,  0.04,  0.02,   0.12,  -0.12,   0.0  ),   # Diagonal NW
-    # Different heights
-    ( 0.00,  0.00, -0.05,   0.0,    0.0,    0.0  ),   # Lower
-    ( 0.00,  0.00,  0.05,   0.0,    0.0,    0.0  ),   # Higher
-    # Yaw rotation
-    ( 0.03,  0.03,  0.00,   0.0,    0.0,    0.15 ),   # Yaw +
-    (-0.03, -0.03,  0.00,   0.0,    0.0,   -0.15 ),   # Yaw -
+    # -------------------------------------------------------------
+    # IMPORTANT: You MUST include poses with angular tilt (Roll/Pitch)!
+    # e.g., tilt the camera around 8-10 degrees locally
+    # ADD AS MANY UNIQUE POSES AS YOU WANT HERE (Recommended 10-15)
+    # -------------------------------------------------------------
 ]
 
 MOVE_VELOCITY = 0.3
@@ -168,18 +160,8 @@ def pose_to_homogeneous(x, y, z, rx, ry, rz):
 
 
 def build_calibration_poses():
-    """Build the full list of calibration poses from center + offsets."""
-    poses = []
-    for dx, dy, dz, dr, dp, dyw in CALIB_POSE_OFFSETS:
-        poses.append((
-            CALIB_CENTER_X + dx,
-            CALIB_CENTER_Y + dy,
-            CALIB_CENTER_Z + dz,
-            CALIB_LOOKING_DOWN_ROLL + dr,
-            CALIB_LOOKING_DOWN_PITCH + dp,
-            CALIB_LOOKING_DOWN_YAW + dyw,
-        ))
-    return poses
+    """Returns the directly specified user coordinates for calibration."""
+    return ABSOLUTE_CALIBRATION_POSES
 
 
 # ============================================================
@@ -242,7 +224,7 @@ class EyeInHandCalibration(Node):
         self.get_logger().info('Eye-in-Hand Calibration node started.')
         self.get_logger().info(f'  Square size: {self.square_size}m')
         self.get_logger().info(f'  Output file: {self.output_file}')
-        self.get_logger().info(f'  Calibration poses: {len(CALIB_POSE_OFFSETS)}')
+        self.get_logger().info(f'  Calibration poses: {len(ABSOLUTE_CALIBRATION_POSES)}')
         
         self.running = True
 
