@@ -52,10 +52,10 @@ ARUCO_DICT_TYPE = cv2.aruco.DICT_4X4_50
 CUBE_SIZE = 0.03              # 3cm cube
 
 # Tool Center Point offset from flange to gripper tip (meters)
-# Adjust if the gripper extends beyond the cobot flange
+# Adjust these values to perfectly align your physical gripper tip
 TCP_OFFSET_X = 0.10985
 TCP_OFFSET_Y = -0.0763
-TCP_OFFSET_Z = 0.10977           # Gripper extends 15cm below flange
+TCP_OFFSET_Z = 0.10977
 
 # Top-view survey position (XYZ in meters, RPY in radians)
 # The cobot moves here to look down and detect both cubes
@@ -318,7 +318,7 @@ class PickPlaceDemo(Node):
                                     (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX,
                                     0.45, (0, 255, 0), 2)
                         cv2.putText(display,
-                                    f"RPY: {roll:.1f}, {pitch:.1f}, {yaw:.1f}",
+                                    f"RPY: {roll:.3f}, {pitch:.3f}, {yaw:.3f}",
                                     (text_x, text_y + 18), cv2.FONT_HERSHEY_SIMPLEX,
                                     0.45, (0, 255, 255), 2)
 
@@ -422,31 +422,45 @@ class PickPlaceDemo(Node):
     # --------------------------------------------------------
 
     def set_gripper(self, close=True):
-        """Open or close the gripper via SetIO service."""
+        """Open or close the gripper via SetIO service. Retries up to 3 times."""
         state = GRIPPER_CLOSE_STATE if close else GRIPPER_OPEN_STATE
         action = "CLOSE" if close else "OPEN"
-        self.get_logger().info(f'Gripper {action}...')
 
-        if not self.io_client.wait_for_service(timeout_sec=5.0):
-            self.get_logger().error('SetIO service not available!')
-            return False
+        for attempt in range(1, 4):
+            self.get_logger().info(f'Gripper {action} (Attempt {attempt}/3)...')
 
-        request = SetIO.Request()
-        request.module = GRIPPER_MODULE
-        request.type = GRIPPER_TYPE
-        request.pin = GRIPPER_PIN
-        request.state = state
+            if not self.io_client.wait_for_service(timeout_sec=2.0):
+                self.get_logger().error('SetIO service not available!')
+            else:
+                request = SetIO.Request()
+                request.module = GRIPPER_MODULE
+                request.type = GRIPPER_TYPE
+                request.pin = GRIPPER_PIN
+                request.state = state
 
-        future = self.io_client.call_async(request)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
+                future = self.io_client.call_async(request)
+                
+                # Asynchronous wait to prevent nested node spinning
+                t_start = time.time()
+                while not future.done() and (time.time() - t_start) < 5.0 and self.running and rclpy.ok():
+                    time.sleep(0.05)
 
-        result = future.result()
-        if result and result.ok:
-            self.get_logger().info(f'Gripper {action} OK.')
-            return True
-        else:
-            self.get_logger().error(f'Gripper {action} failed!')
-            return False
+                if not future.done():
+                    self.get_logger().error(f'Gripper {action} service call timed out!')
+                else:
+                    result = future.result()
+                    if result and result.ok:
+                        self.get_logger().info(f'Gripper {action} OK.')
+                        return True
+                    else:
+                        self.get_logger().error(f'Gripper {action} failed (service returned false)!')
+
+            if attempt < 3:
+                self.get_logger().warn(f'Retrying gripper {action} in 500ms...')
+                time.sleep(0.5)
+
+        self.get_logger().error(f'Gripper {action} permanently failed after 3 attempts!')
+        return False
 
     # --------------------------------------------------------
     # Detection
@@ -500,21 +514,24 @@ class PickPlaceDemo(Node):
             last_pos = pos.copy()
 
             if consistent_count >= settle_frames:
+                R_base_marker = T_base_marker[:3, :3]
+                _, _, marker_yaw = rotation_matrix_to_euler_zyx(R_base_marker)
+                
                 self.get_logger().info(
                     f'Marker {marker_id} in base frame: '
-                    f'X={pos[0]*1000:.1f}mm Y={pos[1]*1000:.1f}mm Z={pos[2]*1000:.1f}mm')
-                return pos
+                    f'X={pos[0]*1000:.1f}mm Y={pos[1]*1000:.1f}mm Z={pos[2]*1000:.1f}mm Yaw={math.degrees(marker_yaw):.1f}°')
+                return pos, marker_yaw
 
         self.get_logger().warn(f'Could not get stable detection for marker {marker_id}')
-        return None
+        return None, None
 
-    def get_flange_target(self, pos_base, z_padding):
+    def get_flange_target(self, pos_base, z_padding, target_yaw=TOP_VIEW_YAW):
         """
         Given the target cube position in Base frame, calculate where the FLANGE 
         needs to travel so the Gripper Tip perfectly reaches the target.
         """
-        # Flange Rotation Matrix at TOP_VIEW
-        R_f = euler_xyz_to_rotation_matrix(TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW)
+        # Flange Rotation Matrix at target orientation
+        R_f = euler_xyz_to_rotation_matrix(TOP_VIEW_ROLL, TOP_VIEW_PITCH, target_yaw)
         
         # Gripper Tip offset in Flange's local coordinate system
         tip_offset_local = np.array([TCP_OFFSET_X, TCP_OFFSET_Y, TCP_OFFSET_Z])
@@ -527,6 +544,14 @@ class PickPlaceDemo(Node):
         
         # Add the Z approach padding
         flange_target[2] += z_padding
+        
+        # Calculate visual TCP goal for logging
+        tcp_goal = pos_base.copy()
+        tcp_goal[2] += z_padding
+        
+        self.get_logger().info(f'TCP Goal:      X={tcp_goal[0]:.4f}, Y={tcp_goal[1]:.4f}, Z={tcp_goal[2]:.4f}')
+        self.get_logger().info(f'Flange Target: X={flange_target[0]:.4f}, Y={flange_target[1]:.4f}, Z={flange_target[2]:.4f}')
+        
         return flange_target
 
     def execute_move(self, x, y, z, roll, pitch, yaw, step_name="Move"):
@@ -586,8 +611,8 @@ class PickPlaceDemo(Node):
 
             # Step 2: Detect cube 1 and cube 0
             self.get_logger().info('Step 2: Detecting cubes...')
-            pos_cube1 = self.get_marker_pose_in_base(1)
-            pos_cube0 = self.get_marker_pose_in_base(0)
+            pos_cube1, yaw_cube1 = self.get_marker_pose_in_base(1)
+            pos_cube0, yaw_cube0 = self.get_marker_pose_in_base(0)
 
             if pos_cube1 is None:
                 self.get_logger().warn('Cube 1 not detected! Retrying cycle...')
@@ -597,20 +622,23 @@ class PickPlaceDemo(Node):
                 self.get_logger().warn('Cube 0 not detected! Retrying cycle...')
                 time.sleep(2)
                 continue
+                
+            yaw_1 = TOP_VIEW_YAW + yaw_cube1
+            yaw_0 = TOP_VIEW_YAW + yaw_cube0
 
             # Step 3: Move above cube 1 (approach)
             self.get_logger().info('Step 3: Approaching cube 1...')
-            approach_pos = self.get_flange_target(pos_cube1, APPROACH_HEIGHT)
+            approach_pos = self.get_flange_target(pos_cube1, APPROACH_HEIGHT, yaw_1)
             if not self.execute_move(approach_pos[0], approach_pos[1], approach_pos[2],
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW, "Step 3"):
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_1, "Step 3"):
                 self.get_logger().error('Failed to approach cube 1 permanently.')
                 continue
 
             # Step 4: Move down to grab position
             self.get_logger().info('Step 4: Descending to grab cube 1...')
-            grab_pos = self.get_flange_target(pos_cube1, 0.0)
+            grab_pos = self.get_flange_target(pos_cube1, 0.0, yaw_1)
             if not self.execute_move(grab_pos[0], grab_pos[1], grab_pos[2],
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW, "Step 4"):
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_1, "Step 4"):
                 self.get_logger().error('Failed to descend to cube 1 permanently.')
                 continue
 
@@ -619,27 +647,42 @@ class PickPlaceDemo(Node):
             self.set_gripper(close=True)
             time.sleep(0.8)
 
-            # Step 6: Retreat up
+            # Step 6: Retreat up directly
             self.get_logger().info('Step 6: Retreating...')
-            retreat_pos = self.get_flange_target(pos_cube1, RETREAT_HEIGHT)
+            retreat_pos = self.get_flange_target(pos_cube1, RETREAT_HEIGHT, yaw_1)
             if not self.execute_move(retreat_pos[0], retreat_pos[1], retreat_pos[2],
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW, "Step 6"):
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_1, "Step 6"):
                 self.get_logger().error('Failed to retreat after grab permanently.')
                 continue
 
-            # Step 7: Move above cube 0 (with stacking offset)
-            self.get_logger().info('Step 7: Moving above cube 0...')
-            place_approach_pos = self.get_flange_target(pos_cube0, PLACE_STACK_OFFSET + APPROACH_HEIGHT)
+            # Step 6.5: Ascend to safe travel height (clears tallest stack)
+            self.get_logger().info('Step 6.5: Ascending to travel height...')
+            place_approach_pos = self.get_flange_target(pos_cube0, PLACE_STACK_OFFSET + APPROACH_HEIGHT, yaw_0)
+            travel_z = max(retreat_pos[2], place_approach_pos[2])
+            
+            if not self.execute_move(retreat_pos[0], retreat_pos[1], travel_z,
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_1, "Step 6.5"):
+                self.get_logger().error('Failed to ascend to safe travel height.')
+                continue
+
+            # Step 7: Move laterally above cube 0
+            self.get_logger().info('Step 7: Moving laterally above cube 0...')
+            if not self.execute_move(place_approach_pos[0], place_approach_pos[1], travel_z,
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_0, "Step 7"):
+                self.get_logger().error('Failed to translate to cube 0 permanently.')
+                continue
+
+            # Step 7.5: Descend to place approach height
             if not self.execute_move(place_approach_pos[0], place_approach_pos[1], place_approach_pos[2],
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW, "Step 7"):
-                self.get_logger().error('Failed to approach cube 0 permanently.')
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_0, "Step 7.5"):
+                self.get_logger().error('Failed to descend to approach height.')
                 continue
 
             # Step 8: Move down to place position (on top of cube 0)
             self.get_logger().info('Step 8: Placing cube 1 on cube 0...')
-            place_pos = self.get_flange_target(pos_cube0, PLACE_STACK_OFFSET)
+            place_pos = self.get_flange_target(pos_cube0, PLACE_STACK_OFFSET, yaw_0)
             if not self.execute_move(place_pos[0], place_pos[1], place_pos[2],
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW, "Step 8"):
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_0, "Step 8"):
                 self.get_logger().error('Failed to descend to place position permanently.')
                 continue
 
@@ -648,10 +691,10 @@ class PickPlaceDemo(Node):
             self.set_gripper(close=False)
             time.sleep(0.8)
 
-            # Step 10: Retreat up
+            # Step 10: Final retreat away from stack
             self.get_logger().info('Step 10: Final retreat...')
             if not self.execute_move(place_approach_pos[0], place_approach_pos[1], place_approach_pos[2],
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW, "Step 10"):
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_0, "Step 10"):
                 self.get_logger().error('Failed to perform final retreat permanently.')
                 continue
 
