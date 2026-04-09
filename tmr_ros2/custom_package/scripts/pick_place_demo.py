@@ -59,9 +59,9 @@ TCP_OFFSET_Z = 0.10977           # Gripper extends 15cm below flange
 
 # Top-view survey position (XYZ in meters, RPY in radians)
 # The cobot moves here to look down and detect both cubes
-TOP_VIEW_X = 0.33
-TOP_VIEW_Y = 0.0
-TOP_VIEW_Z = 0.50
+TOP_VIEW_X = 0.350
+TOP_VIEW_Y = 0.15
+TOP_VIEW_Z = 0.500
 TOP_VIEW_ROLL = 3.14159       # π  — looking straight down
 TOP_VIEW_PITCH = 0.0
 TOP_VIEW_YAW = 1.5708
@@ -378,6 +378,9 @@ class PickPlaceDemo(Node):
                 time.sleep(0.5)
 
                 wait_start = time.time()
+                last_curr_pos = None
+                stationary_count = 0
+
                 while not arm_arrived and (time.time() - wait_start) < 15.0:
                     with self.pose_lock:
                         curr_pose = self.latest_tcp_pose
@@ -386,7 +389,19 @@ class PickPlaceDemo(Node):
                         curr_pos = np.array(curr_pose[:3])
                         dist = np.linalg.norm(curr_pos - target_pos)
                         
-                        if dist < 0.005:  # within 5mm radius
+                        # Check if arm has physically stopped moving
+                        if last_curr_pos is not None:
+                            movement = np.linalg.norm(curr_pos - last_curr_pos)
+                            if movement < 0.0005:  # Moved less than 0.5mm
+                                stationary_count += 1
+                            else:
+                                stationary_count = 0
+                        last_curr_pos = curr_pos
+
+                        # Arrived if it reached perfectly, or if it has completely stopped moving 
+                        # for 0.5 seconds while reasonably close to the target coordinate
+                        if dist < 0.005 or (stationary_count >= 5 and dist < 0.25):
+                            self.get_logger().info(f'Arm reached target (Dist: {dist:.4f}m, Stationary checks: {stationary_count}).')
                             arm_arrived = True
                             break
                     time.sleep(0.1)
@@ -514,6 +529,18 @@ class PickPlaceDemo(Node):
         flange_target[2] += z_padding
         return flange_target
 
+    def execute_move(self, x, y, z, roll, pitch, yaw, step_name="Move"):
+        """Wrapper for move_to with automatic retry logic."""
+        attempts = 0
+        success = False
+        while attempts < 15 and not success and self.running and rclpy.ok():
+            success = self.move_to(x, y, z, roll, pitch, yaw)
+            if not success:
+                self.get_logger().warn(f"[{step_name}] Move failed. Retrying (Attempt {attempts + 1}/15)...")
+                time.sleep(1.0)
+            attempts += 1
+        return success
+
     # --------------------------------------------------------
     # Demo Pipeline
     # --------------------------------------------------------
@@ -549,9 +576,9 @@ class PickPlaceDemo(Node):
 
             # Step 1: Go to top view
             self.get_logger().info('Step 1: Moving to top view...')
-            if not self.move_to(TOP_VIEW_X, TOP_VIEW_Y, TOP_VIEW_Z,
-                                TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW):
-                self.get_logger().error('Failed to move to top view. Retrying...')
+            if not self.execute_move(TOP_VIEW_X, TOP_VIEW_Y, TOP_VIEW_Z,
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW, "Step 1"):
+                self.get_logger().error('Failed to move to top view permanently. Retrying cycle...')
                 time.sleep(2)
                 continue
 
@@ -574,17 +601,17 @@ class PickPlaceDemo(Node):
             # Step 3: Move above cube 1 (approach)
             self.get_logger().info('Step 3: Approaching cube 1...')
             approach_pos = self.get_flange_target(pos_cube1, APPROACH_HEIGHT)
-            if not self.move_to(approach_pos[0], approach_pos[1], approach_pos[2],
-                                TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW):
-                self.get_logger().error('Failed to approach cube 1.')
+            if not self.execute_move(approach_pos[0], approach_pos[1], approach_pos[2],
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW, "Step 3"):
+                self.get_logger().error('Failed to approach cube 1 permanently.')
                 continue
 
             # Step 4: Move down to grab position
             self.get_logger().info('Step 4: Descending to grab cube 1...')
             grab_pos = self.get_flange_target(pos_cube1, 0.0)
-            if not self.move_to(grab_pos[0], grab_pos[1], grab_pos[2],
-                                TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW):
-                self.get_logger().error('Failed to descend to cube 1.')
+            if not self.execute_move(grab_pos[0], grab_pos[1], grab_pos[2],
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW, "Step 4"):
+                self.get_logger().error('Failed to descend to cube 1 permanently.')
                 continue
 
             # Step 5: Close gripper
@@ -595,23 +622,25 @@ class PickPlaceDemo(Node):
             # Step 6: Retreat up
             self.get_logger().info('Step 6: Retreating...')
             retreat_pos = self.get_flange_target(pos_cube1, RETREAT_HEIGHT)
-            self.move_to(retreat_pos[0], retreat_pos[1], retreat_pos[2],
-                         TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW)
+            if not self.execute_move(retreat_pos[0], retreat_pos[1], retreat_pos[2],
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW, "Step 6"):
+                self.get_logger().error('Failed to retreat after grab permanently.')
+                continue
 
             # Step 7: Move above cube 0 (with stacking offset)
             self.get_logger().info('Step 7: Moving above cube 0...')
             place_approach_pos = self.get_flange_target(pos_cube0, PLACE_STACK_OFFSET + APPROACH_HEIGHT)
-            if not self.move_to(place_approach_pos[0], place_approach_pos[1], place_approach_pos[2],
-                                TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW):
-                self.get_logger().error('Failed to approach cube 0.')
+            if not self.execute_move(place_approach_pos[0], place_approach_pos[1], place_approach_pos[2],
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW, "Step 7"):
+                self.get_logger().error('Failed to approach cube 0 permanently.')
                 continue
 
             # Step 8: Move down to place position (on top of cube 0)
             self.get_logger().info('Step 8: Placing cube 1 on cube 0...')
             place_pos = self.get_flange_target(pos_cube0, PLACE_STACK_OFFSET)
-            if not self.move_to(place_pos[0], place_pos[1], place_pos[2],
-                                TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW):
-                self.get_logger().error('Failed to descend to place position.')
+            if not self.execute_move(place_pos[0], place_pos[1], place_pos[2],
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW, "Step 8"):
+                self.get_logger().error('Failed to descend to place position permanently.')
                 continue
 
             # Step 9: Open gripper
@@ -621,8 +650,10 @@ class PickPlaceDemo(Node):
 
             # Step 10: Retreat up
             self.get_logger().info('Step 10: Final retreat...')
-            self.move_to(place_approach_pos[0], place_approach_pos[1], place_approach_pos[2],
-                         TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW)
+            if not self.execute_move(place_approach_pos[0], place_approach_pos[1], place_approach_pos[2],
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW, "Step 10"):
+                self.get_logger().error('Failed to perform final retreat permanently.')
+                continue
 
             self.get_logger().info(f'--- Cycle {cycle} complete! ---')
             time.sleep(2)

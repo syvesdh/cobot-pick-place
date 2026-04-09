@@ -1,0 +1,4 @@
+I will fix the wait logic in move_to to correctly wait for arm arrival by:
+1. Adding debug logs for distance.
+2. Checking positional stability.
+3. Checking return values on Step 6 and Step 10.

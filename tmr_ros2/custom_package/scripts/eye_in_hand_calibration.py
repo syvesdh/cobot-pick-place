@@ -58,7 +58,7 @@ ABSOLUTE_CALIBRATION_POSES = [
     ( 0.250,  0.015,  0.500,   2.87979,   0.000,   1.571 ),  # Front Rx
     ( 0.450,  0.015,  0.500,   3.40339,   0.000,   1.571 ),  # Back Rx
     ( 0.350,  0.115,  0.500,   3.141,   0.261799,   1.571 ),  # Right Ry
-    ( 0.350,  -0.085,  0.500,   3.141,   0.261799,   1.571 ),  # Left Ry
+    ( 0.350,  -0.085,  0.500,   3.141,   -0.261799,   1.571 ),  # Left Ry
     ( 0.350,  0.015,  0.500,   3.141,   0.000,   2.00713 ),  # Rz
     ( 0.350,  0.015,  0.500,   3.141,   0.000,   1.309 ),  # Rz
     ( 0.350,  0.015,  0.600,   3.141,   0.000,   0.785398 ),  # Rz Up
@@ -70,7 +70,7 @@ ABSOLUTE_CALIBRATION_POSES = [
     ( 0.350,  0.080,  0.500,   3.141,   0.000,   1.571 ),  # Y+
     ( 0.350,  -0.050,  0.500,   3.141,   0.000,   1.571 ),  # Y-
     ( 0.350,  0.015,  0.600,   3.141,   0.000,   1.571 ),  # Z+
-    ( 0.350,  0.015,  0.350,   3.141,   0.000,   1.571 ),  # Z-
+    ( 0.350,  0.015,  0.400,   3.141,   0.000,   1.571 ),  # Z-
 
     # -------------------------------------------------------------
     # IMPORTANT: You MUST include poses with angular tilt (Roll/Pitch)!
@@ -81,7 +81,7 @@ ABSOLUTE_CALIBRATION_POSES = [
 
 MOVE_VELOCITY = 0.3
 MOVE_ACCELERATION = 0.3
-SETTLE_TIME = 4.0   # Seconds to wait after moving before capturing
+SETTLE_TIME = 3.0   # Seconds to wait after moving before capturing
 
 
 # ============================================================
@@ -371,6 +371,15 @@ class EyeInHandCalibration(Node):
         print("=" * 60)
 
         while self.running and rclpy.ok():
+            attempts = 0
+            success = False
+            while attempts < 15 and not success:
+                success = self.move_to(0.350,  0.015,  0.600,   3.141,   0.000,   1.571)
+                if not success:
+                    print(f"  [!] Move service failed. Retrying (Attempt {attempts + 1})...")
+                    time.sleep(1.0)
+                attempts += 1
+
             with self.image_lock:
                 frame = self.latest_image.copy() if self.latest_image is not None else None
 
@@ -479,10 +488,10 @@ class EyeInHandCalibration(Node):
             # Move cobot to the calibration pose with retries
             attempts = 0
             success = False
-            while attempts < 3 and not success:
+            while attempts < 15 and not success:
                 success = self.move_to(x, y, z, r, p, yw)
                 if not success:
-                    print(f"  [!] Move service failed. Retrying ({attempts + 1}/3)...")
+                    print(f"  [!] Move service failed. Retrying (Attempt {attempts + 1})...")
                     time.sleep(1.0)
                 attempts += 1
 
