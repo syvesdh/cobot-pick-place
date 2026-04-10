@@ -64,7 +64,12 @@ ABSOLUTE_CALIBRATION_POSES = [
     ( 0.350,  0.015,  0.600,   3.141,   0.000,   0.785398 ),  # Rz Up
     ( 0.350,  0.015,  0.600,   3.141,   0.000,   2.35619 ),  # Rz Up
     
-    ( 0.350,  0.015,  0.500,   3.141,   0.000,   1.571 ),  # Center
+    # --- Diagonal Quadrants (Rx and Ry Mixed) ---
+    ( 0.250,  0.115,  0.500,   2.87979,  0.261799,  1.571 ),  # Front-Right (Rx- Ry+)
+    ( 0.250, -0.085,  0.500,   2.87979, -0.261799,  1.571 ),  # Front-Left  (Rx- Ry-)
+    ( 0.450,  0.115,  0.500,   3.40339,  0.261799,  1.571 ),  # Back-Right  (Rx+ Ry+)
+    ( 0.450, -0.085,  0.500,   3.40339, -0.261799,  1.571 ),  # Back-Left   (Rx+ Ry-)
+    
     ( 0.380,  0.015,  0.500,   3.141,   0.000,   1.571 ),  # X+
     ( 0.330,  0.015,  0.500,   3.141,   0.000,   1.571 ),  # X-
     ( 0.350,  0.080,  0.500,   3.141,   0.000,   1.571 ),  # Y+
@@ -81,7 +86,7 @@ ABSOLUTE_CALIBRATION_POSES = [
 
 MOVE_VELOCITY = 0.3
 MOVE_ACCELERATION = 0.3
-SETTLE_TIME = 3.0   # Seconds to wait after moving before capturing
+SETTLE_TIME = 1.0   # Seconds to wait after moving before capturing
 
 
 # ============================================================
@@ -177,6 +182,10 @@ class EyeInHandCalibration(Node):
         self.declare_parameter('output', DEFAULT_OUTPUT)
         self.square_size = self.get_parameter('square_size').get_parameter_value().double_value
         self.output_file = self.get_parameter('output').get_parameter_value().string_value
+
+        # Ensure output directory for debug images exists
+        self.image_out_dir = "calibration_images"
+        os.makedirs(self.image_out_dir, exist_ok=True)
 
         # Chessboard object points
         self.objp = np.zeros((BOARD_SIZE[0] * BOARD_SIZE[1], 3), np.float32)
@@ -407,6 +416,10 @@ class EyeInHandCalibration(Node):
                     self.frames_captured += 1
                     self.last_capture_time = current_time
                     print(f"  [Phase 1] Captured frame {self.frames_captured}. Move the board!")
+                    
+                    # Save image for debug/inspection
+                    cv2.imwrite(os.path.join(self.image_out_dir, f"phase1_corners_{self.frames_captured:02d}.jpg"), display)
+                    
                     display = cv2.bitwise_not(display)
 
             cv2.putText(display, f"Phase 1: Intrinsic | Captured: {self.frames_captured}",
@@ -626,6 +639,9 @@ class EyeInHandCalibration(Node):
             self.R_target2cam_list.append(R_t2c)
             self.t_target2cam_list.append(t_t2c)
             self.hand_eye_captures += 1
+
+            # Save image for debug/inspection
+            cv2.imwrite(os.path.join(self.image_out_dir, f"phase2_corners_{self.hand_eye_captures:02d}.jpg"), display)
 
             # Flash feedback
             display = cv2.bitwise_not(display)

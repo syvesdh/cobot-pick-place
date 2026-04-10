@@ -623,8 +623,14 @@ class PickPlaceDemo(Node):
                 time.sleep(2)
                 continue
                 
-            yaw_1 = TOP_VIEW_YAW + yaw_cube1
-            yaw_0 = TOP_VIEW_YAW + yaw_cube0
+            # Normalize yaw to the nearest 90-degree face to minimize TM wrist joint rotation
+            # A square cube is symmetrical every 90 degrees (pi/2).
+            # This logic strictly bounds the correction between -45° to +45° (-pi/4 to +pi/4).
+            yaw_correction_1 = (yaw_cube1 + math.pi/4) % (math.pi/2) - math.pi/4
+            yaw_correction_0 = (yaw_cube0 + math.pi/4) % (math.pi/2) - math.pi/4
+                
+            yaw_1 = TOP_VIEW_YAW + yaw_correction_1
+            yaw_0 = TOP_VIEW_YAW + yaw_correction_0
 
             # Step 3: Move above cube 1 (approach)
             self.get_logger().info('Step 3: Approaching cube 1...')
