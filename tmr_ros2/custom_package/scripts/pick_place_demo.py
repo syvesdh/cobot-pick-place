@@ -52,11 +52,16 @@ ARUCO_DICT_TYPE = cv2.aruco.DICT_4X4_50
 CUBE_SIZE = 0.03              # 3cm cube
 GRIP_DEPTH = -0.010           # 1cm depth offset into the cube
 
-# Tool Center Point offset from flange to gripper tip (meters)
-# Adjust these values to perfectly align your physical gripper tip
-TCP_OFFSET_X = 0.10985
-TCP_OFFSET_Y = -0.0763
-TCP_OFFSET_Z = 0.10977
+# The physical offset from the active Tool (Flange) to the Gripper finger tips
+GRIPPER_OFFSET_X = 0.1130
+GRIPPER_OFFSET_Y = -0.0033
+GRIPPER_OFFSET_Z = 0.1205
+
+# The physical offset from the active Tool (Flange) to the Camera lens
+# We use this to correctly hover the camera purely overhead without gripper skew
+CAMERA_OFFSET_X = 0.1101
+CAMERA_OFFSET_Y = 0.0827
+CAMERA_OFFSET_Z = 0.0
 
 # Top-view survey position (XYZ in meters, RPY in radians)
 # The cobot moves here to look down and detect both cubes
@@ -528,35 +533,44 @@ class PickPlaceDemo(Node):
 
     def get_flange_target(self, pos_base, z_padding, target_yaw=TOP_VIEW_YAW):
         """
-        Given the target cube position in Base frame, calculate where the FLANGE 
-        needs to travel so the Gripper Tip perfectly reaches the target.
+        Calculate where the FLANGE needs to travel so the GRIPPER TIP perfectly reaches the target.
         """
-        # Flange Rotation Matrix at target orientation
         R_f = euler_xyz_to_rotation_matrix(TOP_VIEW_ROLL, TOP_VIEW_PITCH, target_yaw)
-        
-        # Gripper Tip offset in Flange's local coordinate system
-        tip_offset_local = np.array([TCP_OFFSET_X, TCP_OFFSET_Y, TCP_OFFSET_Z])
-        
-        # Rotate that local offset into the global Base frame
+        tip_offset_local = np.array([GRIPPER_OFFSET_X, GRIPPER_OFFSET_Y, GRIPPER_OFFSET_Z])
         tip_offset_base = R_f @ tip_offset_local
-        
-        # Flange absolute target = Target Pos - Offset
         flange_target = pos_base - tip_offset_base
-        
-        # Add the Z approach padding
         flange_target[2] += z_padding
         
-        # Calculate visual TCP goal for logging
         tcp_goal = pos_base.copy()
         tcp_goal[2] += z_padding
-        
         self.get_logger().info(f'TCP Goal:      X={tcp_goal[0]:.4f}, Y={tcp_goal[1]:.4f}, Z={tcp_goal[2]:.4f}')
         self.get_logger().info(f'Flange Target: X={flange_target[0]:.4f}, Y={flange_target[1]:.4f}, Z={flange_target[2]:.4f}')
+        return flange_target
+
+    def get_camera_target(self, pos_base, z_padding, target_yaw=TOP_VIEW_YAW):
+        """
+        Calculate where the FLANGE needs to travel so the CAMERA exactly centers on pos_base.
+        """
+        R_f = euler_xyz_to_rotation_matrix(TOP_VIEW_ROLL, TOP_VIEW_PITCH, target_yaw)
+        cam_offset_local = np.array([CAMERA_OFFSET_X, CAMERA_OFFSET_Y, CAMERA_OFFSET_Z])
+        cam_offset_base = R_f @ cam_offset_local
+        flange_target = pos_base - cam_offset_base
+        flange_target[2] += z_padding
         
+        cam_goal = pos_base.copy()
+        cam_goal[2] += z_padding
+        self.get_logger().info(f'Camera Goal:   X={cam_goal[0]:.4f}, Y={cam_goal[1]:.4f}, Z={cam_goal[2]:.4f}')
+        self.get_logger().info(f'Flange Target: X={flange_target[0]:.4f}, Y={flange_target[1]:.4f}, Z={flange_target[2]:.4f}')
         return flange_target
 
     def execute_move(self, x, y, z, roll, pitch, yaw, step_name="Move"):
-        """Wrapper for move_to with automatic retry logic."""
+        """Wrapper for move_to with automatic retry logic and safety limits."""
+        # Safety Hard Limit: Don't crash the table
+        if roll > 3.0 and abs(pitch) < 0.2:  # Facing downwards
+            if z < 0.140:
+                self.get_logger().warn(f'[{step_name}] Safety override! Z {z:.3f} is below 0.140m limit! Clamping.')
+                z = 0.140
+        
         attempts = 0
         success = False
         while attempts < 15 and not success and self.running and rclpy.ok():
@@ -633,9 +647,9 @@ class PickPlaceDemo(Node):
             yaw_1 = TOP_VIEW_YAW + yaw_correction_1
             yaw_0 = TOP_VIEW_YAW + yaw_correction_0
 
-            # Step 3: Move above cube 1 (approach)
-            self.get_logger().info('Step 3: Approaching cube 1...')
-            approach_pos = self.get_flange_target(pos_cube1, APPROACH_HEIGHT, yaw_1)
+            # Step 3: Move above cube 1 (approach) - using CAMERA TARGET
+            self.get_logger().info('Step 3: Approaching cube 1 with camera overhead...')
+            approach_pos = self.get_camera_target(pos_cube1, APPROACH_HEIGHT, yaw_1)
             if not self.execute_move(approach_pos[0], approach_pos[1], approach_pos[2],
                                      TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_1, "Step 3"):
                 self.get_logger().error('Failed to approach cube 1 permanently.')
@@ -675,8 +689,9 @@ class PickPlaceDemo(Node):
                 continue
 
             # Step 6.5: Ascend to safe travel height (clears tallest stack)
-            self.get_logger().info('Step 6.5: Ascending to travel height...')
-            place_approach_pos = self.get_flange_target(pos_cube0, PLACE_STACK_OFFSET + APPROACH_HEIGHT, yaw_0)
+            # Step 7: Move laterally above cube 0 - using CAMERA TARGET
+            self.get_logger().info('Step 7: Moving laterally above cube 0 with camera overhead...')
+            place_approach_pos = self.get_camera_target(pos_cube0, PLACE_STACK_OFFSET + APPROACH_HEIGHT, yaw_0)
             travel_z = max(retreat_pos[2], place_approach_pos[2])
             
             if not self.execute_move(retreat_pos[0], retreat_pos[1], travel_z,
@@ -722,9 +737,9 @@ class PickPlaceDemo(Node):
             self.set_gripper(close=False)
             time.sleep(0.8)
 
-            # Step 10: Final retreat away from stack
+            # Step 10: Final retreat away from stack - vertically directly up from stack
             self.get_logger().info('Step 10: Final retreat...')
-            # Recalculate retreat strictly relative to fine-tuned orientation
+            # Keep Retreat aligned with Gripper, not camera, since we just dropped the block and don't want sideways drift!
             place_approach_pos_fine = self.get_flange_target(pos_cube0, PLACE_STACK_OFFSET + APPROACH_HEIGHT, yaw_0)
             if not self.execute_move(place_approach_pos_fine[0], place_approach_pos_fine[1], place_approach_pos_fine[2],
                                      TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_0, "Step 10"):
