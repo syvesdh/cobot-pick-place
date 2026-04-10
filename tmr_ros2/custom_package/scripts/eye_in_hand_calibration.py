@@ -38,6 +38,7 @@ import math
 import time
 import threading
 import os
+from collections import deque
 
 
 # ============================================================
@@ -209,6 +210,7 @@ class EyeInHandCalibration(Node):
         self.latest_image = None
         self.display_image = None
         self.latest_tcp_pose = None
+        self.pose_history = deque(maxlen=20)
         self.last_key = -1
         self.image_lock = threading.Lock()
         self.pose_lock = threading.Lock()
@@ -264,7 +266,9 @@ class EyeInHandCalibration(Node):
         """Store latest TCP pose from feedback_states."""
         if len(msg.tool_pose) == 6:
             with self.pose_lock:
-                self.latest_tcp_pose = list(msg.tool_pose)
+                pose_list = list(msg.tool_pose)
+                self.latest_tcp_pose = pose_list
+                self.pose_history.append((pose_list, time.time()))
 
     # --------------------------------------------------------
     # Movement
@@ -298,40 +302,36 @@ class EyeInHandCalibration(Node):
             self.get_logger().error('set_positions service call timed out!')
             return False
 
-        result = future.result()
-        if result and result.ok:
-            self.get_logger().info('Move command queued successfully.')
-            
-            # Synchronously wait for the physical robot to reach the target block
-            self.get_logger().info('Waiting for arm to physically reach target...')
-            target_pos = np.array([float(x), float(y), float(z)])
-            arm_arrived = False
-            time.sleep(0.5)
+        # Wait until physical stationary
+        self.get_logger().info('Goal sent. Waiting for robot to reach destination and settle...')
+        t_wait_start = time.time()
+        stationary_start = None
 
-            wait_start = time.time()
-            while not arm_arrived and (time.time() - wait_start) < 20.0:
-                with self.pose_lock:
-                    curr_pose = self.latest_tcp_pose
+        while (time.time() - t_wait_start) < 20.0:
+            with self.pose_lock:
+                history_copy = list(self.pose_history)
+
+            if len(history_copy) >= 2:
+                recent_poses = [p for p in history_copy if time.time() - p[1] < 0.5]
                 
-                if curr_pose is not None:
-                    curr_pos = np.array(curr_pose[:3])
-                    # Euclidean distance in meters
-                    dist = np.linalg.norm(curr_pos - target_pos) 
-                    
-                    if dist < 0.005:  # within 5mm
-                        arm_arrived = True
-                        break
-                
-                time.sleep(0.1)
-                
-            if not arm_arrived:
-                self.get_logger().error('Movement timed out! Arm never arrived at the target coordinates.')
-                return False
-                
-            return True
-        else:
-            self.get_logger().error('Move failed (service returned false).')
-            return False
+                if len(recent_poses) >= 2:
+                    p_old = np.array(recent_poses[0][0][:3])
+                    p_new = np.array(recent_poses[-1][0][:3])
+                    dist_moved = np.linalg.norm(p_new - p_old)
+
+                    if dist_moved < 0.0005:  # Less than 0.5mm movement in 0.5 seconds
+                        if stationary_start is None:
+                            stationary_start = time.time()
+                        elif time.time() - stationary_start > 0.5:
+                            self.get_logger().info('Robot stationary confirmed. Camera snapping...')
+                            return True
+                    else:
+                        stationary_start = None
+
+            time.sleep(0.1)
+
+        self.get_logger().warn('Stationary timeout reached (20s)! Proceeding anyway.')
+        return True
 
     # --------------------------------------------------------
     # Main Calibration Loop
@@ -512,10 +512,6 @@ class EyeInHandCalibration(Node):
                 print(f"  [!] Failed to reach pose {i + 1} permanently. Skipping this detection.")
                 continue
 
-            # Wait for the camera image to settle
-            print(f"  Settling for {SETTLE_TIME}s...")
-            time.sleep(SETTLE_TIME)
-
             # Try to detect chessboard and capture
             captured = self._try_capture_pair()
 
@@ -544,7 +540,7 @@ class EyeInHandCalibration(Node):
                     self.t_gripper2base_list,
                     self.R_target2cam_list,
                     self.t_target2cam_list,
-                    method=cv2.CALIB_HAND_EYE_TSAI
+                    method=cv2.CALIB_HAND_EYE_DANIILIDIS
                 )
 
                 T_tcp_to_camera = np.eye(4)
@@ -552,6 +548,30 @@ class EyeInHandCalibration(Node):
                 T_tcp_to_camera[:3, 3] = t_cam2tcp.flatten()
 
                 print(f"\nT_tcp_to_camera (4x4):\n{T_tcp_to_camera}")
+
+                # === Validation Loop (Reprojection Error) ===
+                errors = []
+                for R_g2b, t_g2b, R_t2c, t_t2c in zip(
+                        self.R_gripper2base_list, self.t_gripper2base_list,
+                        self.R_target2cam_list, self.t_target2cam_list):
+                    
+                    T_base_tcp = np.eye(4)
+                    T_base_tcp[:3, :3], T_base_tcp[:3, 3] = R_g2b, t_g2b.flatten()
+                    
+                    T_cam_target = np.eye(4)
+                    T_cam_target[:3, :3], T_cam_target[:3, 3] = R_t2c, t_t2c.flatten()
+                    
+                    T_base_target = T_base_tcp @ T_tcp_to_camera @ T_cam_target
+                    errors.append(T_base_target[:3, 3])
+                
+                errors = np.array(errors)
+                centroid = np.mean(errors, axis=0)
+                euclidean_dists = np.linalg.norm(errors - centroid, axis=1) * 1000.0  # mm
+                
+                print(f"\n--- Validation Metrics ---")
+                print(f"Mean Reprojection Error: {np.mean(euclidean_dists):.2f} mm")
+                print(f"Max  Reprojection Error: {np.max(euclidean_dists):.2f} mm")
+                print(f"--------------------------")
 
                 # Save everything
                 np.savez(self.output_file,

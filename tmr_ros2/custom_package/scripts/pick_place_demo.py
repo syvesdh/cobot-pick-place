@@ -50,6 +50,7 @@ ARUCO_DICT_TYPE = cv2.aruco.DICT_4X4_50
 
 # Cube dimensions (meters)
 CUBE_SIZE = 0.03              # 3cm cube
+GRIP_DEPTH = -0.010           # 1cm depth offset into the cube
 
 # Tool Center Point offset from flange to gripper tip (meters)
 # Adjust these values to perfectly align your physical gripper tip
@@ -640,9 +641,21 @@ class PickPlaceDemo(Node):
                 self.get_logger().error('Failed to approach cube 1 permanently.')
                 continue
 
+            # Step 3.5: Visual Servoing (Fine-tune with Zero Parallax)
+            time.sleep(1.0)  # Let camera settle mechanically
+            self.get_logger().info('Step 3.5: Fine-tuning cube 1 position...')
+            fine_pos_cube1, fine_yaw_cube1 = self.get_marker_pose_in_base(1, settle_frames=3)
+            if fine_pos_cube1 is not None:
+                yaw_correction_1 = (fine_yaw_cube1 + math.pi/4) % (math.pi/2) - math.pi/4
+                yaw_1 = TOP_VIEW_YAW + yaw_correction_1
+                pos_cube1 = fine_pos_cube1
+                self.get_logger().info('Successfully fine-tuned cube 1 position.')
+            else:
+                self.get_logger().warn('Could not fine-tune cube 1. Trusting initial coordinates.')
+
             # Step 4: Move down to grab position
             self.get_logger().info('Step 4: Descending to grab cube 1...')
-            grab_pos = self.get_flange_target(pos_cube1, 0.0, yaw_1)
+            grab_pos = self.get_flange_target(pos_cube1, GRIP_DEPTH, yaw_1)
             if not self.execute_move(grab_pos[0], grab_pos[1], grab_pos[2],
                                      TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_1, "Step 4"):
                 self.get_logger().error('Failed to descend to cube 1 permanently.')
@@ -684,6 +697,18 @@ class PickPlaceDemo(Node):
                 self.get_logger().error('Failed to descend to approach height.')
                 continue
 
+            # Step 7.8: Visual Servoing (Fine-tune stack location with Zero Parallax)
+            time.sleep(1.0)  # Settle camera
+            self.get_logger().info('Step 7.8: Fine-tuning cube 0 stack location...')
+            fine_pos_cube0, fine_yaw_cube0 = self.get_marker_pose_in_base(0, settle_frames=3)
+            if fine_pos_cube0 is not None:
+                yaw_correction_0 = (fine_yaw_cube0 + math.pi/4) % (math.pi/2) - math.pi/4
+                yaw_0 = TOP_VIEW_YAW + yaw_correction_0
+                pos_cube0 = fine_pos_cube0
+                self.get_logger().info('Successfully fine-tuned cube 0 position.')
+            else:
+                self.get_logger().warn('Could not fine-tune cube 0. Trusting initial coordinates.')
+
             # Step 8: Move down to place position (on top of cube 0)
             self.get_logger().info('Step 8: Placing cube 1 on cube 0...')
             place_pos = self.get_flange_target(pos_cube0, PLACE_STACK_OFFSET, yaw_0)
@@ -699,7 +724,9 @@ class PickPlaceDemo(Node):
 
             # Step 10: Final retreat away from stack
             self.get_logger().info('Step 10: Final retreat...')
-            if not self.execute_move(place_approach_pos[0], place_approach_pos[1], place_approach_pos[2],
+            # Recalculate retreat strictly relative to fine-tuned orientation
+            place_approach_pos_fine = self.get_flange_target(pos_cube0, PLACE_STACK_OFFSET + APPROACH_HEIGHT, yaw_0)
+            if not self.execute_move(place_approach_pos_fine[0], place_approach_pos_fine[1], place_approach_pos_fine[2],
                                      TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_0, "Step 10"):
                 self.get_logger().error('Failed to perform final retreat permanently.')
                 continue
