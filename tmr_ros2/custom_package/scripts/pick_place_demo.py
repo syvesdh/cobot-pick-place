@@ -57,12 +57,6 @@ GRIPPER_OFFSET_X = 0.1130
 GRIPPER_OFFSET_Y = -0.0033
 GRIPPER_OFFSET_Z = 0.1205
 
-# The physical offset from the active Tool (Flange) to the Camera lens
-# We use this to correctly hover the camera purely overhead without gripper skew
-CAMERA_OFFSET_X = 0.1101
-CAMERA_OFFSET_Y = 0.0827
-CAMERA_OFFSET_Z = 0.0
-
 # Top-view survey position (XYZ in meters, RPY in radians)
 # The cobot moves here to look down and detect both cubes
 TOP_VIEW_X = 0.350
@@ -550,9 +544,10 @@ class PickPlaceDemo(Node):
     def get_camera_target(self, pos_base, z_padding, target_yaw=TOP_VIEW_YAW):
         """
         Calculate where the FLANGE needs to travel so the CAMERA exactly centers on pos_base.
+        Uses the exact translation vector from the loaded Extrinsics matrix.
         """
         R_f = euler_xyz_to_rotation_matrix(TOP_VIEW_ROLL, TOP_VIEW_PITCH, target_yaw)
-        cam_offset_local = np.array([CAMERA_OFFSET_X, CAMERA_OFFSET_Y, CAMERA_OFFSET_Z])
+        cam_offset_local = self.T_tcp_to_camera[:3, 3]  # dynamically pull translation vector
         cam_offset_base = R_f @ cam_offset_local
         flange_target = pos_base - cam_offset_base
         flange_target[2] += z_padding
