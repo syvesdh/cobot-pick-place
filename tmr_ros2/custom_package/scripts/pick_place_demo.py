@@ -293,7 +293,7 @@ class PickPlaceDemo(Node):
 
             for i in range(len(ids)):
                 marker_id = ids[i][0]
-                if marker_id in (0, 1):
+                if marker_id in (0, 1, 2, 3):
                     marker_corners = corners[i][0]
                     success, rvec, tvec = cv2.solvePnP(
                         self.marker_obj_points, marker_corners, self.mtx, self.dist)
@@ -664,6 +664,14 @@ class PickPlaceDemo(Node):
             else:
                 self.get_logger().warn(f'Could not fine-tune cube {source_id}. Trusting initial coordinates.')
 
+            # Step 3.7: Align GRIPPER overhead before plunging
+            self.get_logger().info(f'Step 3.7: Aligning gripper overhead {source_id}...')
+            grab_approach_pos = self.get_flange_target(pos_source, APPROACH_HEIGHT_GRIP, yaw_source_norm)
+            if not self.execute_move(grab_approach_pos[0], grab_approach_pos[1], grab_approach_pos[2],
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_source_norm, "Step 3.7"):
+                self.get_logger().error(f'Failed to align gripper over cube {source_id} permanently. Aborting.')
+                break
+
             # Step 4: Move down to grab position
             self.get_logger().info(f'Step 4: Descending to grab cube {source_id}...')
             grab_pos = self.get_flange_target(pos_source, GRIP_DEPTH, yaw_source_norm)
@@ -716,6 +724,14 @@ class PickPlaceDemo(Node):
                 self.get_logger().info(f'Successfully fine-tuned {target_id} position.')
             else:
                 self.get_logger().warn(f'Could not fine-tune {target_id}. Trusting initial coordinates.')
+
+            # Step 7.9: Align GRIPPER overhead before plunging
+            self.get_logger().info(f'Step 7.9: Aligning gripper overhead target {target_id}...')
+            place_approach_gripper = self.get_flange_target(pos_target, PLACE_STACK_OFFSET + APPROACH_HEIGHT_GRIP, yaw_target_norm)
+            if not self.execute_move(place_approach_gripper[0], place_approach_gripper[1], place_approach_gripper[2],
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_target_norm, "Step 7.9"):
+                self.get_logger().error('Failed to align gripper over place target. Aborting.')
+                break
 
             # Step 8: Move down to place position
             self.get_logger().info(f'Step 8: Descending to place {source_id} on {target_id}...')
