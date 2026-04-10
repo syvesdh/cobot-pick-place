@@ -61,7 +61,7 @@ TCP_OFFSET_Z = 0.10977
 # Top-view survey position (XYZ in meters, RPY in radians)
 # The cobot moves here to look down and detect both cubes
 TOP_VIEW_X = 0.350
-TOP_VIEW_Y = 0.15
+TOP_VIEW_Y = 0.015
 TOP_VIEW_Z = 0.500
 TOP_VIEW_ROLL = 3.14159       # π  — looking straight down
 TOP_VIEW_PITCH = 0.0
