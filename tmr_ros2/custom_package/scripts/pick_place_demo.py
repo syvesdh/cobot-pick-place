@@ -74,7 +74,8 @@ GRIPPER_CLOSE_STATE = 1.0      # STATE_ON  = close gripper
 GRIPPER_OPEN_STATE = 0.0       # STATE_OFF = open gripper
 
 # Motion parameters
-APPROACH_HEIGHT = 0.08         # Height above target to approach from (meters)
+APPROACH_HEIGHT = 0.18         # Height above target to approach from (meters)
+APPROACH_HEIGHT_GRIP = 0.08
 RETREAT_HEIGHT = 0.06          # Height to lift after grab (meters)
 PLACE_STACK_OFFSET = 0.03     # Extra height for stacking (= cube height)
 MOVE_VELOCITY = 0.3            # MoveIt velocity scaling (0.0–1.0)
@@ -241,7 +242,7 @@ class PickPlaceDemo(Node):
         self.get_logger().info('Pick-and-Place Demo node started.')
         self.get_logger().info(f'  Marker size: {MARKER_SIZE}m')
         self.get_logger().info(f'  Cube size:   {CUBE_SIZE}m')
-        self.get_logger().info(f'  TCP offset:  [{TCP_OFFSET_X}, {TCP_OFFSET_Y}, {TCP_OFFSET_Z}]')
+        self.get_logger().info(f'  TCP offset:  [{GRIPPER_OFFSET_X}, {GRIPPER_OFFSET_Y}, {GRIPPER_OFFSET_Z}]')
 
         # Run main demo loop in background
         self.running = True
@@ -361,7 +362,7 @@ class PickPlaceDemo(Node):
         future = self.set_pos_client.call_async(req)
         
         t_start = time.time()
-        while not future.done() and (time.time() - t_start) < 10.0:
+        while not future.done() and (time.time() - t_start) < 2.0:
             time.sleep(0.05)
 
         if not future.done():
@@ -375,13 +376,13 @@ class PickPlaceDemo(Node):
                 self.get_logger().info('Waiting for arm to physically reach target...')
                 target_pos = np.array([float(x), float(y), float(z)])
                 arm_arrived = False
-                time.sleep(0.5)
+                time.sleep(0.2)
 
                 wait_start = time.time()
                 last_curr_pos = None
                 stationary_count = 0
 
-                while not arm_arrived and (time.time() - wait_start) < 15.0:
+                while not arm_arrived and (time.time() - wait_start) < 0.8:
                     with self.pose_lock:
                         curr_pose = self.latest_tcp_pose
 
@@ -400,7 +401,7 @@ class PickPlaceDemo(Node):
 
                         # Arrived if it reached perfectly, or if it has completely stopped moving 
                         # for 0.5 seconds while reasonably close to the target coordinate
-                        if dist < 0.005 or (stationary_count >= 5 and dist < 0.25):
+                        if dist < 0.005 or (stationary_count >= 5 and dist < 0.05):
                             self.get_logger().info(f'Arm reached target (Dist: {dist:.4f}m, Stationary checks: {stationary_count}).')
                             arm_arrived = True
                             break
@@ -426,8 +427,8 @@ class PickPlaceDemo(Node):
         state = GRIPPER_CLOSE_STATE if close else GRIPPER_OPEN_STATE
         action = "CLOSE" if close else "OPEN"
 
-        for attempt in range(1, 4):
-            self.get_logger().info(f'Gripper {action} (Attempt {attempt}/3)...')
+        for attempt in range(1, 11):
+            self.get_logger().info(f'Gripper {action} (Attempt {attempt})...')
 
             if not self.io_client.wait_for_service(timeout_sec=2.0):
                 self.get_logger().error('SetIO service not available!')
@@ -443,7 +444,7 @@ class PickPlaceDemo(Node):
                 # Asynchronous wait to prevent nested node spinning
                 t_start = time.time()
                 while not future.done() and (time.time() - t_start) < 5.0 and self.running and rclpy.ok():
-                    time.sleep(0.05)
+                    time.sleep(0.1)
 
                 if not future.done():
                     self.get_logger().error(f'Gripper {action} service call timed out!')
@@ -451,16 +452,16 @@ class PickPlaceDemo(Node):
                     result = future.result()
                     if result and result.ok:
                         self.get_logger().info(f'Gripper {action} OK.')
-                        return True
+                        # return True
                     else:
                         self.get_logger().error(f'Gripper {action} failed (service returned false)!')
 
-            if attempt < 3:
-                self.get_logger().warn(f'Retrying gripper {action} in 500ms...')
-                time.sleep(0.5)
+                # self.get_logger().warn(f'Retrying gripper {action} in 500ms...')
+                time.sleep(0.1)
+        return True
 
-        self.get_logger().error(f'Gripper {action} permanently failed after 3 attempts!')
-        return False
+        # self.get_logger().error(f'Gripper {action} permanently failed after 3 attempts!')
+        # return False
 
     # --------------------------------------------------------
     # Detection
@@ -568,11 +569,11 @@ class PickPlaceDemo(Node):
         
         attempts = 0
         success = False
-        while attempts < 15 and not success and self.running and rclpy.ok():
+        while attempts < 20 and not success and self.running and rclpy.ok():
             success = self.move_to(x, y, z, roll, pitch, yaw)
             if not success:
                 self.get_logger().warn(f"[{step_name}] Move failed. Retrying (Attempt {attempts + 1}/15)...")
-                time.sleep(1.0)
+                time.sleep(0.2)
             attempts += 1
         return success
 
@@ -617,6 +618,9 @@ class PickPlaceDemo(Node):
                 time.sleep(2)
                 continue
 
+            self.get_logger().info('Step 1.1: Releasing cube 1...')
+            self.set_gripper(close=False)
+
             time.sleep(1.0)  # Let camera settle
 
             # Step 2: Detect cube 1 and cube 0
@@ -651,7 +655,7 @@ class PickPlaceDemo(Node):
                 continue
 
             # Step 3.5: Visual Servoing (Fine-tune with Zero Parallax)
-            time.sleep(1.0)  # Let camera settle mechanically
+            time.sleep(0.5)  # Let camera settle mechanically
             self.get_logger().info('Step 3.5: Fine-tuning cube 1 position...')
             fine_pos_cube1, fine_yaw_cube1 = self.get_marker_pose_in_base(1, settle_frames=3)
             if fine_pos_cube1 is not None:
@@ -661,6 +665,14 @@ class PickPlaceDemo(Node):
                 self.get_logger().info('Successfully fine-tuned cube 1 position.')
             else:
                 self.get_logger().warn('Could not fine-tune cube 1. Trusting initial coordinates.')
+
+            # Step 3.7: Move above cube 1 (approach) - using CAMERA TARGET
+            self.get_logger().info('Step 3.7: Approaching cube 1 with camera overhead...')
+            grab_pos = self.get_flange_target(pos_cube1, APPROACH_HEIGHT_GRIP, yaw_1)
+            if not self.execute_move(grab_pos[0], grab_pos[1], grab_pos[2],
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_1, "Step 3.7"):
+                self.get_logger().error('Failed to descend to cube 1 permanently.')
+                continue
 
             # Step 4: Move down to grab position
             self.get_logger().info('Step 4: Descending to grab cube 1...')
@@ -673,7 +685,7 @@ class PickPlaceDemo(Node):
             # Step 5: Close gripper
             self.get_logger().info('Step 5: Grabbing cube 1...')
             self.set_gripper(close=True)
-            time.sleep(0.8)
+            time.sleep(0.2)
 
             # Step 6: Retreat up directly
             self.get_logger().info('Step 6: Retreating...')
@@ -708,7 +720,7 @@ class PickPlaceDemo(Node):
                 continue
 
             # Step 7.8: Visual Servoing (Fine-tune stack location with Zero Parallax)
-            time.sleep(1.0)  # Settle camera
+            time.sleep(0.5)  # Settle camera
             self.get_logger().info('Step 7.8: Fine-tuning cube 0 stack location...')
             fine_pos_cube0, fine_yaw_cube0 = self.get_marker_pose_in_base(0, settle_frames=3)
             if fine_pos_cube0 is not None:
@@ -730,7 +742,14 @@ class PickPlaceDemo(Node):
             # Step 9: Open gripper
             self.get_logger().info('Step 9: Releasing cube 1...')
             self.set_gripper(close=False)
-            time.sleep(0.8)
+            time.sleep(0.2)
+
+            self.get_logger().info('Step 8: Placing cube 1 on cube 0...')
+            place_pos = self.get_flange_target(pos_cube0, PLACE_STACK_OFFSET+0.1, yaw_0)
+            if not self.execute_move(place_pos[0], place_pos[1], place_pos[2],
+                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_0, "Step 8"):
+                self.get_logger().error('Failed to descend to place position permanently.')
+                continue
 
             # Step 10: Final retreat away from stack - vertically directly up from stack
             self.get_logger().info('Step 10: Final retreat...')
