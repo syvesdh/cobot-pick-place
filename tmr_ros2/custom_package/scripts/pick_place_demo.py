@@ -603,160 +603,161 @@ class PickPlaceDemo(Node):
 
         # Open gripper initially
         self.set_gripper(close=False)
-        stack_sequence = [(1, 0), (2, 1), (3, 2)]
+        stack_sequence = [(1, 0), (2, 1), (2, 3), (1, 2)]
 
-        for step_idx, (source_id, target_id) in enumerate(stack_sequence):
-            if not self.running or not rclpy.ok():
-                break
+        while self.running and rclpy.ok():
+            for step_idx, (source_id, target_id) in enumerate(stack_sequence):
+                if not self.running or not rclpy.ok():
+                    break
 
-            self.get_logger().info(f'\n--- Stacking sequence {step_idx + 1}/{len(stack_sequence)} | Marker {source_id} -> Marker {target_id} ---')
+                self.get_logger().info(f'\n--- Stacking sequence {step_idx + 1}/{len(stack_sequence)} | Marker {source_id} -> Marker {target_id} ---')
 
-            # Step 1: Go to top view
-            self.get_logger().info('Step 1: Moving to top view...')
-            if not self.execute_move(TOP_VIEW_X, TOP_VIEW_Y, TOP_VIEW_Z,
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW, "Step 1"):
-                self.get_logger().error('Failed to move to top view permanently. Aborting sequence.')
-                break
+                # Step 1: Go to top view
+                self.get_logger().info('Step 1: Moving to top view...')
+                if not self.execute_move(TOP_VIEW_X, TOP_VIEW_Y, TOP_VIEW_Z,
+                                        TOP_VIEW_ROLL, TOP_VIEW_PITCH, TOP_VIEW_YAW, "Step 1"):
+                    self.get_logger().error('Failed to move to top view permanently. Aborting sequence.')
+                    break
 
-            self.get_logger().info(f'Step 1.1: Ensuring gripper is open...')
-            self.set_gripper(close=False)
+                self.get_logger().info(f'Step 1.1: Ensuring gripper is open...')
+                self.set_gripper(close=False)
 
-            time.sleep(0.2)  # Let initial major robotic shake settle
+                time.sleep(0.2)  # Let initial major robotic shake settle
 
-            # Step 2: Detect source and target cubes
-            self.get_logger().info(f'Step 2: Detecting cubes {source_id} and {target_id}...')
-            pos_source, yaw_source = self.get_marker_pose_in_base(source_id)
-            pos_target, yaw_target = self.get_marker_pose_in_base(target_id)
+                # Step 2: Detect source and target cubes
+                self.get_logger().info(f'Step 2: Detecting cubes {source_id} and {target_id}...')
+                pos_source, yaw_source = self.get_marker_pose_in_base(source_id)
+                pos_target, yaw_target = self.get_marker_pose_in_base(target_id)
 
-            if pos_source is None:
-                self.get_logger().warn(f'Source cube {source_id} not detected! Aborting sequence.')
-                break
-            if pos_target is None:
-                self.get_logger().warn(f'Target cube {target_id} not detected! Aborting sequence.')
-                break
+                if pos_source is None:
+                    self.get_logger().warn(f'Source cube {source_id} not detected! Aborting sequence.')
+                    break
+                if pos_target is None:
+                    self.get_logger().warn(f'Target cube {target_id} not detected! Aborting sequence.')
+                    break
+                    
+                # Normalize yaw to the nearest 90-degree face to minimize TM wrist joint rotation
+                # A square cube is symmetrical every 90 degrees (pi/2).
+                # This logic strictly bounds the correction between -45° to +45° (-pi/4 to +pi/4).
+                yaw_correction_source = (yaw_source + math.pi/4) % (math.pi/2) - math.pi/4
+                yaw_correction_target = (yaw_target + math.pi/4) % (math.pi/2) - math.pi/4
+                    
+                yaw_source_norm = TOP_VIEW_YAW + yaw_correction_source
+                yaw_target_norm = TOP_VIEW_YAW + yaw_correction_target
+
+                # Step 3: Move above source cube (approach) - using CAMERA TARGET
+                self.get_logger().info(f'Step 3: Approaching source cube {source_id} with camera overhead...')
+                approach_pos = self.get_camera_target(pos_source, APPROACH_HEIGHT, yaw_source_norm)
+                if not self.execute_move(approach_pos[0], approach_pos[1], approach_pos[2],
+                                        TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_source_norm, "Step 3"):
+                    self.get_logger().error(f'Failed to approach cube {source_id} permanently. Aborting.')
+                    break
+
+                # Step 3.5: Visual Servoing (Fine-tune with Zero Parallax)
+                # The get_marker_pose block natively halts until structural vibrations have damped via `settle_frames`.
+                self.get_logger().info(f'Step 3.5: Fine-tuning cube {source_id} position...')
+                fine_pos_source, fine_yaw_source = self.get_marker_pose_in_base(source_id, settle_frames=3)
+                if fine_pos_source is not None:
+                    yaw_correction_fine = (fine_yaw_source + math.pi/4) % (math.pi/2) - math.pi/4
+                    yaw_source_norm = TOP_VIEW_YAW + yaw_correction_fine
+                    pos_source = fine_pos_source
+                    self.get_logger().info(f'Successfully fine-tuned cube {source_id} position.')
+                else:
+                    self.get_logger().warn(f'Could not fine-tune cube {source_id}. Trusting initial coordinates.')
+
+                # Step 3.7: Align GRIPPER overhead before plunging
+                self.get_logger().info(f'Step 3.7: Aligning gripper overhead {source_id}...')
+                grab_approach_pos = self.get_flange_target(pos_source, APPROACH_HEIGHT_GRIP, yaw_source_norm)
+                if not self.execute_move(grab_approach_pos[0], grab_approach_pos[1], grab_approach_pos[2],
+                                        TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_source_norm, "Step 3.7"):
+                    self.get_logger().error(f'Failed to align gripper over cube {source_id} permanently. Aborting.')
+                    break
+
+                # Step 4: Move down to grab position
+                self.get_logger().info(f'Step 4: Descending to grab cube {source_id}...')
+                grab_pos = self.get_flange_target(pos_source, GRIP_DEPTH, yaw_source_norm)
+                if not self.execute_move(grab_pos[0], grab_pos[1], grab_pos[2],
+                                        TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_source_norm, "Step 4"):
+                    self.get_logger().error(f'Failed to descend to cube {source_id} permanently. Aborting.')
+                    break
+
+                # Step 5: Close gripper
+                self.get_logger().info(f'Step 5: Grabbing cube {source_id}...')
+                self.set_gripper(close=True)
+                time.sleep(0.2)
+
+                # Step 6: Retreat up directly
+                self.get_logger().info(f'Step 6: Retreating...')
+                retreat_pos = self.get_flange_target(pos_source, RETREAT_HEIGHT, yaw_source_norm)
+                if not self.execute_move(retreat_pos[0], retreat_pos[1], retreat_pos[2],
+                                        TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_source_norm, "Step 6"):
+                    self.get_logger().error('Failed to retreat after grab permanently. Aborting.')
+                    break
+
+                # Step 7: Move laterally above target cube - using CAMERA TARGET
+                self.get_logger().info(f'Step 7: Moving laterally above target cube {target_id} with camera overhead...')
+                place_approach_pos = self.get_camera_target(pos_target, PLACE_STACK_OFFSET + APPROACH_HEIGHT, yaw_target_norm)
+                travel_z = max(retreat_pos[2], place_approach_pos[2])
                 
-            # Normalize yaw to the nearest 90-degree face to minimize TM wrist joint rotation
-            # A square cube is symmetrical every 90 degrees (pi/2).
-            # This logic strictly bounds the correction between -45° to +45° (-pi/4 to +pi/4).
-            yaw_correction_source = (yaw_source + math.pi/4) % (math.pi/2) - math.pi/4
-            yaw_correction_target = (yaw_target + math.pi/4) % (math.pi/2) - math.pi/4
-                
-            yaw_source_norm = TOP_VIEW_YAW + yaw_correction_source
-            yaw_target_norm = TOP_VIEW_YAW + yaw_correction_target
+                if not self.execute_move(retreat_pos[0], retreat_pos[1], travel_z,
+                                        TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_source_norm, "Step 6.5"):
+                    self.get_logger().error('Failed to ascend to safe travel height. Aborting.')
+                    break
 
-            # Step 3: Move above source cube (approach) - using CAMERA TARGET
-            self.get_logger().info(f'Step 3: Approaching source cube {source_id} with camera overhead...')
-            approach_pos = self.get_camera_target(pos_source, APPROACH_HEIGHT, yaw_source_norm)
-            if not self.execute_move(approach_pos[0], approach_pos[1], approach_pos[2],
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_source_norm, "Step 3"):
-                self.get_logger().error(f'Failed to approach cube {source_id} permanently. Aborting.')
-                break
+                if not self.execute_move(place_approach_pos[0], place_approach_pos[1], travel_z,
+                                        TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_target_norm, "Step 7"):
+                    self.get_logger().error(f'Failed to translate to target cube {target_id} permanently. Aborting.')
+                    break
 
-            # Step 3.5: Visual Servoing (Fine-tune with Zero Parallax)
-            # The get_marker_pose block natively halts until structural vibrations have damped via `settle_frames`.
-            self.get_logger().info(f'Step 3.5: Fine-tuning cube {source_id} position...')
-            fine_pos_source, fine_yaw_source = self.get_marker_pose_in_base(source_id, settle_frames=3)
-            if fine_pos_source is not None:
-                yaw_correction_fine = (fine_yaw_source + math.pi/4) % (math.pi/2) - math.pi/4
-                yaw_source_norm = TOP_VIEW_YAW + yaw_correction_fine
-                pos_source = fine_pos_source
-                self.get_logger().info(f'Successfully fine-tuned cube {source_id} position.')
-            else:
-                self.get_logger().warn(f'Could not fine-tune cube {source_id}. Trusting initial coordinates.')
+                # Step 7.5: Descend to place approach height
+                if not self.execute_move(place_approach_pos[0], place_approach_pos[1], place_approach_pos[2],
+                                        TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_target_norm, "Step 7.5"):
+                    self.get_logger().error('Failed to descend to approach height. Aborting.')
+                    break
 
-            # Step 3.7: Align GRIPPER overhead before plunging
-            self.get_logger().info(f'Step 3.7: Aligning gripper overhead {source_id}...')
-            grab_approach_pos = self.get_flange_target(pos_source, APPROACH_HEIGHT_GRIP, yaw_source_norm)
-            if not self.execute_move(grab_approach_pos[0], grab_approach_pos[1], grab_approach_pos[2],
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_source_norm, "Step 3.7"):
-                self.get_logger().error(f'Failed to align gripper over cube {source_id} permanently. Aborting.')
-                break
+                # Step 7.8: Visual Servoing (Fine-tune stack location with Zero Parallax)
+                self.get_logger().info(f'Step 7.8: Fine-tuning target cube {target_id} stack location...')
+                fine_pos_target, fine_yaw_target = self.get_marker_pose_in_base(target_id, settle_frames=3)
+                if fine_pos_target is not None:
+                    yaw_correction_fine_target = (fine_yaw_target + math.pi/4) % (math.pi/2) - math.pi/4
+                    yaw_target_norm = TOP_VIEW_YAW + yaw_correction_fine_target
+                    pos_target = fine_pos_target
+                    self.get_logger().info(f'Successfully fine-tuned {target_id} position.')
+                else:
+                    self.get_logger().warn(f'Could not fine-tune {target_id}. Trusting initial coordinates.')
 
-            # Step 4: Move down to grab position
-            self.get_logger().info(f'Step 4: Descending to grab cube {source_id}...')
-            grab_pos = self.get_flange_target(pos_source, GRIP_DEPTH, yaw_source_norm)
-            if not self.execute_move(grab_pos[0], grab_pos[1], grab_pos[2],
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_source_norm, "Step 4"):
-                self.get_logger().error(f'Failed to descend to cube {source_id} permanently. Aborting.')
-                break
+                # Step 7.9: Align GRIPPER overhead before plunging
+                self.get_logger().info(f'Step 7.9: Aligning gripper overhead target {target_id}...')
+                place_approach_gripper = self.get_flange_target(pos_target, PLACE_STACK_OFFSET + APPROACH_HEIGHT_GRIP, yaw_target_norm)
+                if not self.execute_move(place_approach_gripper[0], place_approach_gripper[1], place_approach_gripper[2],
+                                        TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_target_norm, "Step 7.9"):
+                    self.get_logger().error('Failed to align gripper over place target. Aborting.')
+                    break
 
-            # Step 5: Close gripper
-            self.get_logger().info(f'Step 5: Grabbing cube {source_id}...')
-            self.set_gripper(close=True)
-            time.sleep(0.2)
+                # Step 8: Move down to place position
+                self.get_logger().info(f'Step 8: Descending to place {source_id} on {target_id}...')
+                place_pos = self.get_flange_target(pos_target, PLACE_STACK_OFFSET, yaw_target_norm)
+                if not self.execute_move(place_pos[0], place_pos[1], place_pos[2],
+                                        TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_target_norm, "Step 8"):
+                    self.get_logger().error('Failed to descend to place position permanently. Aborting.')
+                    break
 
-            # Step 6: Retreat up directly
-            self.get_logger().info(f'Step 6: Retreating...')
-            retreat_pos = self.get_flange_target(pos_source, RETREAT_HEIGHT, yaw_source_norm)
-            if not self.execute_move(retreat_pos[0], retreat_pos[1], retreat_pos[2],
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_source_norm, "Step 6"):
-                self.get_logger().error('Failed to retreat after grab permanently. Aborting.')
-                break
+                # Step 9: Open gripper
+                self.get_logger().info(f'Step 9: Releasing cube {source_id}...')
+                self.set_gripper(close=False)
+                time.sleep(0.2)
 
-            # Step 7: Move laterally above target cube - using CAMERA TARGET
-            self.get_logger().info(f'Step 7: Moving laterally above target cube {target_id} with camera overhead...')
-            place_approach_pos = self.get_camera_target(pos_target, PLACE_STACK_OFFSET + APPROACH_HEIGHT, yaw_target_norm)
-            travel_z = max(retreat_pos[2], place_approach_pos[2])
-            
-            if not self.execute_move(retreat_pos[0], retreat_pos[1], travel_z,
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_source_norm, "Step 6.5"):
-                self.get_logger().error('Failed to ascend to safe travel height. Aborting.')
-                break
+                # Step 10: Final retreat away from stack - vertically directly up from stack
+                self.get_logger().info('Step 10: Final retreat...')
+                # Keep Retreat aligned with Gripper, not camera, since we just dropped the block and don't want sideways drift!
+                place_approach_pos_fine = self.get_flange_target(pos_target, PLACE_STACK_OFFSET + APPROACH_HEIGHT, yaw_target_norm)
+                if not self.execute_move(place_approach_pos_fine[0], place_approach_pos_fine[1], place_approach_pos_fine[2],
+                                        TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_target_norm, "Step 10"):
+                    self.get_logger().error('Failed to perform final retreat permanently. Aborting.')
+                    break
 
-            if not self.execute_move(place_approach_pos[0], place_approach_pos[1], travel_z,
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_target_norm, "Step 7"):
-                self.get_logger().error(f'Failed to translate to target cube {target_id} permanently. Aborting.')
-                break
-
-            # Step 7.5: Descend to place approach height
-            if not self.execute_move(place_approach_pos[0], place_approach_pos[1], place_approach_pos[2],
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_target_norm, "Step 7.5"):
-                self.get_logger().error('Failed to descend to approach height. Aborting.')
-                break
-
-            # Step 7.8: Visual Servoing (Fine-tune stack location with Zero Parallax)
-            self.get_logger().info(f'Step 7.8: Fine-tuning target cube {target_id} stack location...')
-            fine_pos_target, fine_yaw_target = self.get_marker_pose_in_base(target_id, settle_frames=3)
-            if fine_pos_target is not None:
-                yaw_correction_fine_target = (fine_yaw_target + math.pi/4) % (math.pi/2) - math.pi/4
-                yaw_target_norm = TOP_VIEW_YAW + yaw_correction_fine_target
-                pos_target = fine_pos_target
-                self.get_logger().info(f'Successfully fine-tuned {target_id} position.')
-            else:
-                self.get_logger().warn(f'Could not fine-tune {target_id}. Trusting initial coordinates.')
-
-            # Step 7.9: Align GRIPPER overhead before plunging
-            self.get_logger().info(f'Step 7.9: Aligning gripper overhead target {target_id}...')
-            place_approach_gripper = self.get_flange_target(pos_target, PLACE_STACK_OFFSET + APPROACH_HEIGHT_GRIP, yaw_target_norm)
-            if not self.execute_move(place_approach_gripper[0], place_approach_gripper[1], place_approach_gripper[2],
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_target_norm, "Step 7.9"):
-                self.get_logger().error('Failed to align gripper over place target. Aborting.')
-                break
-
-            # Step 8: Move down to place position
-            self.get_logger().info(f'Step 8: Descending to place {source_id} on {target_id}...')
-            place_pos = self.get_flange_target(pos_target, PLACE_STACK_OFFSET, yaw_target_norm)
-            if not self.execute_move(place_pos[0], place_pos[1], place_pos[2],
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_target_norm, "Step 8"):
-                self.get_logger().error('Failed to descend to place position permanently. Aborting.')
-                break
-
-            # Step 9: Open gripper
-            self.get_logger().info(f'Step 9: Releasing cube {source_id}...')
-            self.set_gripper(close=False)
-            time.sleep(0.2)
-
-            # Step 10: Final retreat away from stack - vertically directly up from stack
-            self.get_logger().info('Step 10: Final retreat...')
-            # Keep Retreat aligned with Gripper, not camera, since we just dropped the block and don't want sideways drift!
-            place_approach_pos_fine = self.get_flange_target(pos_target, PLACE_STACK_OFFSET + APPROACH_HEIGHT, yaw_target_norm)
-            if not self.execute_move(place_approach_pos_fine[0], place_approach_pos_fine[1], place_approach_pos_fine[2],
-                                     TOP_VIEW_ROLL, TOP_VIEW_PITCH, yaw_target_norm, "Step 10"):
-                self.get_logger().error('Failed to perform final retreat permanently. Aborting.')
-                break
-
-            self.get_logger().info(f'--- Successfully stacked {source_id} on {target_id}! ---')
-            time.sleep(0.5)
+                self.get_logger().info(f'--- Successfully stacked {source_id} on {target_id}! ---')
+                time.sleep(0.5)
 
         self.get_logger().info('Tower stacking sequence globally finished.')
         self.running = False
