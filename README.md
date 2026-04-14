@@ -115,7 +115,7 @@ ros2 run custom_package eye_in_hand_calibration.py --ros-args -p square_size:=0.
 
 ### Step 2: Pick-and-Place Demo
 
-Runs the full autonomous pick-and-place loop: detect ArUco cubes → pick cube 1 → stack on cube 0.
+Runs the full autonomous continuous pick-and-place loop, executing a programmed multi-cube stacking sequence with visual servoing.
 
 **Using the launch file (recommended):**
 ```bash
@@ -141,11 +141,14 @@ ros2 run custom_package pick_place_demo.py --ros-args -p calib_file:=eye_in_hand
 | `APPROACH_HEIGHT` | `0.08` | Height above target to approach from |
 | `MOVE_VELOCITY` | `0.3` | MoveIt velocity scaling |
 
-**Demo loop:**
-1. Move to top-view → detect cube 0 and cube 1
-2. Approach cube 1 → descend → close gripper
-3. Retreat → move above cube 0 → descend → open gripper → retreat
-4. Repeat
+**Demo loop (Stacking Sequence):**
+The script executes a looped sequence `[(1, 0), (2, 1), (2, 3), (1, 2)]` representing `(source, target)`. For each step:
+1. Move to top-view → detect source and target cubes.
+2. Approach source cube with visual servoing (fine-tuning target location) → descend → close gripper.
+3. Retreat to safe travel height and translate to target cube.
+4. Visual servoing (fine-tuning zero parallax location) over the target cube to assure precision.
+5. Align gripper overhead → descend to stack offset → open gripper → vertical retreat.
+6. Loop to the next stack pair in the sequence.
 
 The camera window displays real-time ArUco detection with 3D axes, cube wireframe overlay, and XYZ/RPY text.
 
