@@ -33,7 +33,7 @@ For the full setup tutorial, please refer to the [TMflow Listen node setup guide
 
 ### TMflow Vision Node Setup
 The Vision node connects the cobot's built-in camera to your ROS PC.
-For the full setup tutorial, please refer to the [TMflow Vision node setup guide](tmr_ros2/README.md#%C2%A7-tmflow-vision-node-setup).
+For the full setup tutorial, please refer to the [TMflow Vision node setup guide](tmr_ros2/README.md#-tmflow-vision-node-setup).
 
 ### Required TMflow Project Flow
 When combining both the Vision node and the Listen node in your TMflow project, your workflow should look like this:
