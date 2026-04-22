@@ -30,10 +30,15 @@ For the full setup tutorial, please refer to the [TMflow Listen node setup guide
 
 > [!IMPORTANT]
 > **Timeout Configuration**: You must configure the timeout for the listen node to ensure the loop runs continuously without aborting prematurely.
+>
+> ![Listen Node Timeout](img/IMG_20260422_105820.webp)
 
 ### TMflow Vision Node Setup
 The Vision node connects the cobot's built-in camera to your ROS PC.
 For the full setup tutorial, please refer to the [TMflow Vision node setup guide](tmr_ros2/README.md#-tmflow-vision-node-setup).
+
+> [!IMPORTANT]
+> **Timeout Configuration**: You must also configure the timeout for the vision node when setting up a job for the external camera.
 
 ### Required TMflow Project Flow
 When combining both the Vision node and the Listen node in your TMflow project, your workflow should look like this:
@@ -70,6 +75,19 @@ ros2 run custom_package eye_in_hand_calibration.py --ros-args -p square_size:=0.
 **Workflow:**
 - **Phase 1** — Intrinsic Calibration: Move the 9×6 chessboard in front of the TM camera. Auto-captures every 1s when corners are detected. Press `c` to calibrate.
 - **Phase 2** — Eye-in-Hand Calibration: The cobot auto-moves to 17 predefined poses via MoveIt. Keep the chessboard **fixed on the table**. Press `q` to abort.
+
+**Tips for a Good Calibration:**
+> [!TIP]
+> - **Intrinsic (Phase 1)**: Move the board to cover the entire field of view (edges and center). Vary the distance, pitch, and yaw. Capture at least 20-30 diverse frames. Ensure the printed board is perfectly flat (mounted on a rigid board, not directly on the table).
+> - **Extrinsic (Phase 2)**: The chessboard **must** remain completely stationary. Place it near the center of the cobot's workspace where it will be fully visible during the 17 predefined poses. Ensure bright, even lighting to prevent shadows over the corners.
+> 
+> **Troubleshooting & Failure Analysis:**
+> - **Signs of a bad calibration**: 
+>   - **Visuals**: During the demo, 3D coordinate axes or cube wireframe overlays appear jittery, tilted, or physically offset from the actual objects.
+>   - **Numeric Values**: Check the terminal output at the end of each phase. A "good" calibration should typically show:
+>     - **Phase 1 (Intrinsic)**: RMS error < 1.0 (ideally < 0.5).
+>     - **Phase 2 (Extrinsic)**: Mean Reprojection Error < 5.0 mm (ideally < 2.0 mm).
+> - **Common Causes**: Poor lighting (glare or shadows on the grid) or low frame diversity in Phase 1. If the robot consistently misses targets, verify the chessboard remained perfectly stationary during Phase 2.
 
 ### Step 3: Pick-and-Place Demo
 
